@@ -15,6 +15,10 @@ import {
   SessionInfo,
 } from '@/lib/socket';
 import {
+  faceTrackingService,
+  FaceTrackingData,
+} from '@/lib/face-tracking';
+import {
   ArrowLeft,
   Send,
   Loader2,
@@ -25,11 +29,44 @@ import {
   ShieldCheck,
   ShieldAlert,
   Camera,
+  Eye,
+  EyeOff,
+  Activity,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 type VerificationStatus = 'pending' | 'verified' | 'failed' | 'checking';
+
+// Tracking event types - focused on significant security-relevant events only
+type TrackingEventType =
+  | 'face_away'      // Face turned away from screen
+  | 'face_returned'  // Face returned to screen
+  | 'looking_away'   // Eyes/gaze not on screen
+  | 'looking_back'   // Eyes returned to screen
+  | 'talking'        // Mouth open, possibly talking to someone
+  | 'stopped_talking'; // Mouth closed
+
+interface TrackingEvent {
+  id: string;
+  type: TrackingEventType;
+  timestamp: Date;
+  message: string;
+  details?: string;
+  severity: 'info' | 'warning' | 'success';
+}
+
+// Helper to format time
+const formatTime = (date: Date) => {
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+};
 
 export default function ChatPage() {
   const router = useRouter();
@@ -44,14 +81,29 @@ export default function ChatPage() {
     null
   );
   const [isInitializing, setIsInitializing] = useState(true);
+  const [trackingData, setTrackingData] = useState<FaceTrackingData | null>(null);
+  const [isTrackingEnabled, setIsTrackingEnabled] = useState(true);
+  const [isTrackingReady, setIsTrackingReady] = useState(false);
+  const [showTrackingDebug, setShowTrackingDebug] = useState(true);
+  const [showEventLog, setShowEventLog] = useState(true);
+  const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const eventLogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const verificationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const trackingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitializedRef = useRef(false); // Track if we've already initialized
   const isCleaningUpRef = useRef(false); // Track if cleanup is intentional
+  
+  // Refs for tracking significant state changes
+  const prevTrackingDataRef = useRef<FaceTrackingData | null>(null);
+  const wasFaceAwayRef = useRef(false);
+  const wasLookingAwayRef = useRef(false);
+  const wasTalkingRef = useRef(false);
+  const lastToastTimeRef = useRef<Record<string, number>>({});
 
   // Capture face from video stream
   const captureFace = useCallback((): string | null => {
@@ -83,6 +135,22 @@ export default function ChatPage() {
       });
 
       socketService.sendFaceVerification(imageBase64);
+
+      // Log current tracking status during verification
+      if (videoRef.current && faceTrackingService.isReady()) {
+        const currentTrackingData = faceTrackingService.processFrame(videoRef.current);
+        if (currentTrackingData) {
+          const isFaceAway = !currentTrackingData.faceDetected || Math.abs(currentTrackingData.headPose.yaw) > 40;
+          const isLookingAway = currentTrackingData.eyes.gazeDirection !== 'CENTER';
+          const isTalking = currentTrackingData.expression.mouthOpen > 30;
+          
+          console.log('=== PERIODIC CHECK ===');
+          console.log(`Face: ${isFaceAway ? '⚠️ AWAY' : '✓ Facing screen'}`);
+          console.log(`Gaze: ${isLookingAway ? `⚠️ Looking ${currentTrackingData.eyes.gazeDirection}` : '✓ Looking at screen'}`);
+          console.log(`Talking: ${isTalking ? `⚠️ Mouth open (${currentTrackingData.expression.mouthOpen}%)` : '✓ Silent'}`);
+          console.log('======================');
+        }
+      }
     }
   }, [captureFace]);
 
@@ -112,6 +180,138 @@ export default function ChatPage() {
       streamRef.current = null;
     }
   }, []);
+
+  // Add a tracking event to the log
+  const addTrackingEvent = useCallback(
+    (
+      type: TrackingEventType,
+      message: string,
+      severity: 'info' | 'warning' | 'success' = 'info',
+      details?: string
+    ) => {
+      const event: TrackingEvent = {
+        id: `${type}-${Date.now()}`,
+        type,
+        timestamp: new Date(),
+        message,
+        details,
+        severity,
+      };
+
+      setTrackingEvents((prev) => {
+        // Keep only last 50 events
+        const newEvents = [event, ...prev].slice(0, 50);
+        return newEvents;
+      });
+
+      // Show toast for important events (with rate limiting)
+      const now = Date.now();
+      const lastToastTime = lastToastTimeRef.current[type] || 0;
+      const minInterval = type === 'blink' ? 2000 : 1000; // Rate limit toasts
+
+      if (now - lastToastTime > minInterval) {
+        lastToastTimeRef.current[type] = now;
+
+        if (severity === 'warning') {
+          toast.warning(message, { description: details, duration: 2000 });
+        } else if (severity === 'success' && type !== 'blink') {
+          toast.success(message, { description: details, duration: 2000 });
+        }
+        // Don't show info toasts to avoid spam
+      }
+    },
+    []
+  );
+
+  // Process face tracking frame - detect only significant security-relevant events
+  const processFaceTracking = useCallback(() => {
+    if (!videoRef.current || !isTrackingEnabled) return;
+
+    const data = faceTrackingService.processFrame(videoRef.current);
+    if (!data) return;
+
+    // === SIGNIFICANT EVENT DETECTION ===
+    
+    // 1. Face turned away (head yaw > 40° or face not detected)
+    const isFaceAway = !data.faceDetected || Math.abs(data.headPose.yaw) > 40 || Math.abs(data.headPose.pitch) > 35;
+    
+    if (isFaceAway && !wasFaceAwayRef.current) {
+      // Face just turned away
+      addTrackingEvent(
+        'face_away',
+        'Face Turned Away',
+        'warning',
+        data.faceDetected 
+          ? `Head angle: yaw=${data.headPose.yaw}° pitch=${data.headPose.pitch}°`
+          : 'Face not detected in frame'
+      );
+      console.log('[ALERT] Face turned away from screen');
+    } else if (!isFaceAway && wasFaceAwayRef.current) {
+      // Face returned
+      addTrackingEvent(
+        'face_returned',
+        'Face Returned to Screen',
+        'success',
+        'User is facing the screen again'
+      );
+      console.log('[OK] Face returned to screen');
+    }
+    wasFaceAwayRef.current = isFaceAway;
+
+    // 2. Eyes/gaze looking away (only when face is detected and facing screen)
+    if (data.faceDetected && !isFaceAway) {
+      const isLookingAway = data.eyes.gazeDirection !== 'CENTER';
+      
+      if (isLookingAway && !wasLookingAwayRef.current) {
+        // Started looking away
+        addTrackingEvent(
+          'looking_away',
+          `Eyes Looking ${data.eyes.gazeDirection}`,
+          'warning',
+          'User\'s gaze is not on the screen'
+        );
+        console.log(`[ALERT] User looking ${data.eyes.gazeDirection}`);
+      } else if (!isLookingAway && wasLookingAwayRef.current) {
+        // Eyes returned to screen
+        addTrackingEvent(
+          'looking_back',
+          'Eyes Returned to Screen',
+          'success',
+          'User is looking at the screen'
+        );
+        console.log('[OK] User looking at screen');
+      }
+      wasLookingAwayRef.current = isLookingAway;
+
+      // 3. Mouth open (possibly talking) - use jawOpen > 30%
+      const isTalking = data.expression.mouthOpen > 30;
+      
+      if (isTalking && !wasTalkingRef.current) {
+        // Started talking
+        addTrackingEvent(
+          'talking',
+          'Possible Talking Detected',
+          'warning',
+          `Mouth openness: ${data.expression.mouthOpen}%`
+        );
+        console.log(`[ALERT] User may be talking (mouth ${data.expression.mouthOpen}% open)`);
+      } else if (!isTalking && wasTalkingRef.current) {
+        // Stopped talking
+        addTrackingEvent(
+          'stopped_talking',
+          'Talking Stopped',
+          'info',
+          'Mouth closed'
+        );
+        console.log('[OK] User stopped talking');
+      }
+      wasTalkingRef.current = isTalking;
+    }
+
+    // Update state for UI display
+    setTrackingData(data);
+    prevTrackingDataRef.current = data;
+  }, [isTrackingEnabled, addTrackingEvent]);
 
   // Initialize on mount - runs only once
   useEffect(() => {
@@ -340,6 +540,13 @@ export default function ChatPage() {
           clearInterval(verificationIntervalRef.current);
         }
 
+        if (trackingIntervalRef.current) {
+          clearInterval(trackingIntervalRef.current);
+        }
+
+        // Cleanup face tracking service
+        faceTrackingService.destroy();
+
         stopCamera();
         socketService.disconnect();
         sessionStorage.removeItem('referenceFace');
@@ -391,6 +598,65 @@ export default function ChatPage() {
       }
     };
   }, [isConnected, performVerification]);
+
+  // Initialize face tracking service and start tracking
+  useEffect(() => {
+    let isMounted = true;
+
+    const initTracking = async () => {
+      try {
+        console.log('[ChatPage] Initializing face tracking service...');
+        await faceTrackingService.initialize();
+        
+        if (isMounted) {
+          console.log('[ChatPage] Face tracking service ready');
+          setIsTrackingReady(true);
+          toast.success('Face Tracking Active', {
+            description: 'Monitoring facial expressions and eye movements',
+            duration: 3000,
+          });
+        }
+      } catch (error) {
+        console.error('[ChatPage] Failed to initialize face tracking:', error);
+        toast.error('Face Tracking Unavailable', {
+          description: 'Could not initialize face tracking. Some features may be limited.',
+          duration: 5000,
+        });
+      }
+    };
+
+    initTracking();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Set up face tracking interval (separate from verification)
+  useEffect(() => {
+    if (!isTrackingEnabled || !isTrackingReady) {
+      console.log('[ChatPage] Face tracking not starting - enabled:', isTrackingEnabled, 'ready:', isTrackingReady);
+      return;
+    }
+
+    const trackingIntervalMs = 500; // Process every 500ms
+    console.log(`[ChatPage] Starting face tracking every ${trackingIntervalMs}ms`);
+
+    // Run immediately once
+    processFaceTracking();
+
+    // Start tracking interval
+    trackingIntervalRef.current = setInterval(() => {
+      processFaceTracking();
+    }, trackingIntervalMs);
+
+    return () => {
+      if (trackingIntervalRef.current) {
+        clearInterval(trackingIntervalRef.current);
+        trackingIntervalRef.current = null;
+      }
+    };
+  }, [isTrackingEnabled, isTrackingReady, processFaceTracking]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -472,6 +738,21 @@ export default function ChatPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {/* Face tracking toggle */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowTrackingDebug(!showTrackingDebug)}
+              className="h-8 px-2"
+              title={showTrackingDebug ? 'Hide tracking debug' : 'Show tracking debug'}
+            >
+              {showTrackingDebug ? (
+                <Eye className="h-4 w-4 text-blue-500" />
+              ) : (
+                <EyeOff className="h-4 w-4 text-slate-400" />
+              )}
+            </Button>
+
             {/* Verification status */}
             <div
               className="flex items-center gap-1.5"
@@ -504,6 +785,167 @@ export default function ChatPage() {
       {verificationStatus === 'failed' && verificationError && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-600">
           {verificationError}
+        </div>
+      )}
+
+      {/* Face Tracking Status Bar - Simplified */}
+      {showTrackingDebug && trackingData && (
+        <div className="border-b border-slate-200 bg-white px-4 py-2">
+          <div className="mx-auto max-w-3xl">
+            <div className="flex flex-wrap items-center justify-center gap-4 text-xs">
+              {/* Face Position */}
+              <div
+                className={cn(
+                  'flex items-center gap-2 rounded-full px-3 py-1',
+                  !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-emerald-100 text-emerald-700'
+                )}
+              >
+                <span
+                  className={cn(
+                    'inline-flex h-2 w-2 rounded-full',
+                    !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                      ? 'bg-red-500'
+                      : 'bg-emerald-500'
+                  )}
+                />
+                <span className="font-medium">
+                  {!trackingData.faceDetected
+                    ? 'No Face'
+                    : Math.abs(trackingData.headPose.yaw) > 40
+                      ? 'Face Away'
+                      : 'Facing Screen'}
+                </span>
+              </div>
+
+              {/* Gaze Direction */}
+              {trackingData.faceDetected && (
+                <div
+                  className={cn(
+                    'flex items-center gap-2 rounded-full px-3 py-1',
+                    trackingData.eyes.gazeDirection !== 'CENTER'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-emerald-100 text-emerald-700'
+                  )}
+                >
+                  <Eye className="h-3 w-3" />
+                  <span className="font-medium">
+                    {trackingData.eyes.gazeDirection === 'CENTER'
+                      ? 'Looking at Screen'
+                      : `Looking ${trackingData.eyes.gazeDirection}`}
+                  </span>
+                </div>
+              )}
+
+              {/* Talking Detection */}
+              {trackingData.faceDetected && (
+                <div
+                  className={cn(
+                    'flex items-center gap-2 rounded-full px-3 py-1',
+                    trackingData.expression.mouthOpen > 30
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-slate-100 text-slate-600'
+                  )}
+                >
+                  <span className="font-medium">
+                    {trackingData.expression.mouthOpen > 30
+                      ? `Talking (${trackingData.expression.mouthOpen}%)`
+                      : 'Silent'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Face Tracking Event Log */}
+      {showTrackingDebug && (
+        <div className="border-b border-slate-200 bg-slate-50">
+          <div className="mx-auto max-w-3xl">
+            {/* Event Log Header */}
+            <button
+              onClick={() => setShowEventLog(!showEventLog)}
+              className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Activity className="h-3 w-3" />
+                <span>Tracking Event Log</span>
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-slate-500">
+                  {trackingEvents.length}
+                </span>
+              </div>
+              {showEventLog ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+
+            {/* Event Log Content */}
+            {showEventLog && (
+              <div
+                ref={eventLogRef}
+                className="max-h-40 overflow-y-auto border-t border-slate-200 bg-white"
+              >
+                {trackingEvents.length === 0 ? (
+                  <div className="px-4 py-3 text-center text-xs text-slate-400">
+                    No events yet. Face tracking events will appear here.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {trackingEvents.map((event) => (
+                      <div
+                        key={event.id}
+                        className={cn(
+                          'flex items-start gap-3 px-4 py-2 text-xs',
+                          event.severity === 'warning' && 'bg-amber-50',
+                          event.severity === 'success' && 'bg-emerald-50'
+                        )}
+                      >
+                        {/* Event Icon */}
+                        <div
+                          className={cn(
+                            'mt-0.5 h-2 w-2 shrink-0 rounded-full',
+                            event.severity === 'info' && 'bg-blue-400',
+                            event.severity === 'warning' && 'bg-amber-400',
+                            event.severity === 'success' && 'bg-emerald-400'
+                          )}
+                        />
+
+                        {/* Event Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                'font-medium',
+                                event.severity === 'info' && 'text-slate-700',
+                                event.severity === 'warning' && 'text-amber-700',
+                                event.severity === 'success' && 'text-emerald-700'
+                              )}
+                            >
+                              {event.message}
+                            </span>
+                          </div>
+                          {event.details && (
+                            <p className="mt-0.5 text-slate-500 truncate">
+                              {event.details}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Timestamp */}
+                        <span className="shrink-0 text-slate-400">
+                          {formatTime(event.timestamp)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
