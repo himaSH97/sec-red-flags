@@ -3,63 +3,28 @@ import {
   FilesetResolver,
   FaceLandmarkerResult,
 } from '@mediapipe/tasks-vision';
+import {
+  GazeDirection,
+  Expression,
+  AttentionLevel,
+  EyeMetrics,
+  ExpressionMetrics,
+  HeadPose,
+  FaceTrackingData,
+} from '@sec-flags/shared';
 
-// ============================================================================
-// Types (will be moved to shared lib in Phase 4)
-// ============================================================================
+// Re-export types for convenience
+export type {
+  GazeDirection,
+  Expression,
+  AttentionLevel,
+  EyeMetrics,
+  ExpressionMetrics,
+  FaceTrackingData,
+};
 
-export type GazeDirection =
-  | 'CENTER'
-  | 'LEFT'
-  | 'RIGHT'
-  | 'UP'
-  | 'DOWN'
-  | 'UP_LEFT'
-  | 'UP_RIGHT'
-  | 'DOWN_LEFT'
-  | 'DOWN_RIGHT';
-
-export type Expression =
-  | 'NEUTRAL'
-  | 'HAPPY'
-  | 'SAD'
-  | 'SURPRISED'
-  | 'ANGRY'
-  | 'CONFUSED';
-
-export type AttentionLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'AWAY';
-
-export interface EyeMetrics {
-  leftEyeOpenness: number; // 0-100%
-  rightEyeOpenness: number; // 0-100%
-  isBlinking: boolean;
-  gazeDirection: GazeDirection;
-}
-
-export interface ExpressionMetrics {
-  dominantExpression: Expression;
-  smile: number; // 0-100%
-  frown: number; // 0-100%
-  surprise: number; // 0-100%
-  browRaise: number; // 0-100%
-  mouthOpen: number; // 0-100%
-}
-
-export interface HeadPoseMetrics {
-  pitch: number; // degrees - nodding up/down
-  yaw: number; // degrees - turning left/right
-  roll: number; // degrees - tilting head
-}
-
-export interface FaceTrackingData {
-  timestamp: number;
-  faceDetected: boolean;
-  eyes: EyeMetrics;
-  expression: ExpressionMetrics;
-  headPose: HeadPoseMetrics;
-  attentionLevel: AttentionLevel;
-  rawBlendshapes?: Record<string, number>; // Optional: all raw blendshape values
-}
+// Alias HeadPose to HeadPoseMetrics for internal use (same structure)
+type HeadPoseMetrics = HeadPose;
 
 // ============================================================================
 // Blendshape name constants

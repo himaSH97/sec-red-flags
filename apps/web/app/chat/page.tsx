@@ -13,6 +13,7 @@ import {
   FaceVerifyResult,
   FaceVerifyFailed,
   SessionInfo,
+  FaceTrackingEventPayload,
 } from '@/lib/socket';
 import {
   faceTrackingService,
@@ -223,6 +224,34 @@ export default function ChatPage() {
     []
   );
 
+  // Send tracking event to backend
+  const sendTrackingEventToBackend = useCallback(
+    (
+      type: FaceTrackingEventPayload['type'],
+      message: string,
+      details: string,
+      trackingData: FaceTrackingData
+    ) => {
+      if (!socketService.isConnected()) return;
+
+      const payload: FaceTrackingEventPayload = {
+        type,
+        timestamp: Date.now(),
+        message,
+        details,
+        data: {
+          headPose: trackingData.headPose,
+          gazeDirection: trackingData.eyes.gazeDirection,
+          mouthOpenness: trackingData.expression.mouthOpen,
+          faceDetected: trackingData.faceDetected,
+        },
+      };
+
+      socketService.sendFaceTrackingEvent(payload);
+    },
+    []
+  );
+
   // Process face tracking frame - detect only significant security-relevant events
   const processFaceTracking = useCallback(() => {
     if (!videoRef.current || !isTrackingEnabled) return;
@@ -237,23 +266,16 @@ export default function ChatPage() {
     
     if (isFaceAway && !wasFaceAwayRef.current) {
       // Face just turned away
-      addTrackingEvent(
-        'face_away',
-        'Face Turned Away',
-        'warning',
-        data.faceDetected 
-          ? `Head angle: yaw=${data.headPose.yaw}° pitch=${data.headPose.pitch}°`
-          : 'Face not detected in frame'
-      );
+      const details = data.faceDetected 
+        ? `Head angle: yaw=${data.headPose.yaw}° pitch=${data.headPose.pitch}°`
+        : 'Face not detected in frame';
+      addTrackingEvent('face_away', 'Face Turned Away', 'warning', details);
+      sendTrackingEventToBackend('face_away', 'Face Turned Away', details, data);
       console.log('[ALERT] Face turned away from screen');
     } else if (!isFaceAway && wasFaceAwayRef.current) {
       // Face returned
-      addTrackingEvent(
-        'face_returned',
-        'Face Returned to Screen',
-        'success',
-        'User is facing the screen again'
-      );
+      addTrackingEvent('face_returned', 'Face Returned to Screen', 'success', 'User is facing the screen again');
+      sendTrackingEventToBackend('face_returned', 'Face Returned to Screen', 'User is facing the screen again', data);
       console.log('[OK] Face returned to screen');
     }
     wasFaceAwayRef.current = isFaceAway;
@@ -264,21 +286,14 @@ export default function ChatPage() {
       
       if (isLookingAway && !wasLookingAwayRef.current) {
         // Started looking away
-        addTrackingEvent(
-          'looking_away',
-          `Eyes Looking ${data.eyes.gazeDirection}`,
-          'warning',
-          'User\'s gaze is not on the screen'
-        );
+        const details = `User's gaze direction: ${data.eyes.gazeDirection}`;
+        addTrackingEvent('looking_away', `Eyes Looking ${data.eyes.gazeDirection}`, 'warning', details);
+        sendTrackingEventToBackend('looking_away', `Eyes Looking ${data.eyes.gazeDirection}`, details, data);
         console.log(`[ALERT] User looking ${data.eyes.gazeDirection}`);
       } else if (!isLookingAway && wasLookingAwayRef.current) {
         // Eyes returned to screen
-        addTrackingEvent(
-          'looking_back',
-          'Eyes Returned to Screen',
-          'success',
-          'User is looking at the screen'
-        );
+        addTrackingEvent('looking_back', 'Eyes Returned to Screen', 'success', 'User is looking at the screen');
+        sendTrackingEventToBackend('looking_back', 'Eyes Returned to Screen', 'User is looking at the screen', data);
         console.log('[OK] User looking at screen');
       }
       wasLookingAwayRef.current = isLookingAway;
@@ -288,21 +303,14 @@ export default function ChatPage() {
       
       if (isTalking && !wasTalkingRef.current) {
         // Started talking
-        addTrackingEvent(
-          'talking',
-          'Possible Talking Detected',
-          'warning',
-          `Mouth openness: ${data.expression.mouthOpen}%`
-        );
+        const details = `Mouth openness: ${data.expression.mouthOpen}%`;
+        addTrackingEvent('talking', 'Possible Talking Detected', 'warning', details);
+        sendTrackingEventToBackend('talking', 'Possible Talking Detected', details, data);
         console.log(`[ALERT] User may be talking (mouth ${data.expression.mouthOpen}% open)`);
       } else if (!isTalking && wasTalkingRef.current) {
         // Stopped talking
-        addTrackingEvent(
-          'stopped_talking',
-          'Talking Stopped',
-          'info',
-          'Mouth closed'
-        );
+        addTrackingEvent('stopped_talking', 'Talking Stopped', 'info', 'Mouth closed');
+        sendTrackingEventToBackend('stopped_talking', 'Talking Stopped', 'Mouth closed', data);
         console.log('[OK] User stopped talking');
       }
       wasTalkingRef.current = isTalking;
@@ -311,7 +319,7 @@ export default function ChatPage() {
     // Update state for UI display
     setTrackingData(data);
     prevTrackingDataRef.current = data;
-  }, [isTrackingEnabled, addTrackingEvent]);
+  }, [isTrackingEnabled, addTrackingEvent, sendTrackingEventToBackend]);
 
   // Initialize on mount - runs only once
   useEffect(() => {

@@ -4,7 +4,8 @@
     "jsx": "preserve",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@sec-flags/shared": ["../../libs/shared/src/index.ts"]
     },
     "strict": true,
     "noEmit": true,

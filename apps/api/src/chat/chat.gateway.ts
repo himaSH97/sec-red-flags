@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
+import { FaceTrackingEventPayload } from '@sec-flags/shared';
 
 interface MessagePayload {
   content: string;
@@ -187,6 +188,60 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         confidence: 0,
         message: 'Face verification error. Please try again.',
       });
+    }
+  }
+
+  @SubscribeMessage('face:tracking')
+  handleFaceTracking(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: FaceTrackingEventPayload,
+  ): void {
+    const timestamp = new Date(payload.timestamp).toISOString();
+    const isWarning = ['face_away', 'looking_away', 'talking'].includes(payload.type);
+    
+    // Format the log message based on event type
+    let logMessage = '';
+    const icon = isWarning ? '⚠️' : '✓';
+    
+    switch (payload.type) {
+      case 'face_away':
+        logMessage = `${icon} FACE AWAY - ${payload.details}`;
+        break;
+      case 'face_returned':
+        logMessage = `${icon} Face returned to screen`;
+        break;
+      case 'looking_away':
+        logMessage = `${icon} LOOKING AWAY - Gaze: ${payload.data?.gazeDirection}`;
+        break;
+      case 'looking_back':
+        logMessage = `${icon} Eyes returned to screen`;
+        break;
+      case 'talking':
+        logMessage = `${icon} TALKING DETECTED - Mouth: ${payload.data?.mouthOpenness}% open`;
+        break;
+      case 'stopped_talking':
+        logMessage = `${icon} Stopped talking`;
+        break;
+      default:
+        logMessage = `${icon} ${payload.message}`;
+    }
+
+    // Log with full context
+    if (isWarning) {
+      this.logger.warn(
+        `[FaceTracking] Client ${client.id} | ${timestamp} | ${logMessage}`,
+      );
+    } else {
+      this.logger.log(
+        `[FaceTracking] Client ${client.id} | ${timestamp} | ${logMessage}`,
+      );
+    }
+
+    // Log additional data for debugging if present
+    if (payload.data && isWarning) {
+      this.logger.debug(
+        `[FaceTracking] Data: ${JSON.stringify(payload.data)}`,
+      );
     }
   }
 }
