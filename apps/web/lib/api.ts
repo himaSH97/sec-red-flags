@@ -2,7 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333/api',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -75,6 +75,55 @@ export const chatApi = {
         timestamp: new Date(),
       },
     };
+  },
+};
+
+// Session types
+export interface Session {
+  _id: string;
+  sessionId: string;
+  clientId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionsResponse {
+  sessions: Session[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface SessionEvent {
+  _id: string;
+  sessionId: string;
+  type: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+  rawData?: Record<string, unknown>;
+}
+
+// Session API functions
+export const sessionApi = {
+  // Get paginated sessions
+  getSessions: async (page = 1, limit = 10): Promise<SessionsResponse> => {
+    const response = await api.get<SessionsResponse>('/sessions', {
+      params: { page, limit },
+    });
+    return response.data;
+  },
+
+  // Get a single session by ID
+  getSession: async (sessionId: string): Promise<Session | null> => {
+    const response = await api.get<Session>(`/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  // Get events for a session
+  getSessionEvents: async (sessionId: string): Promise<SessionEvent[]> => {
+    const response = await api.get<SessionEvent[]>(`/sessions/${sessionId}/events`);
+    return response.data;
   },
 };
 

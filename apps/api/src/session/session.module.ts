@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Session, SessionSchema } from './session.schema';
 import { SessionEvent, SessionEventSchema } from './session-event.schema';
 import { SessionService } from './session.service';
+import { SessionController } from './session.controller';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { SessionService } from './session.service';
       { name: SessionEvent.name, schema: SessionEventSchema },
     ]),
   ],
+  controllers: [SessionController],
   providers: [SessionService],
   exports: [SessionService],
 })

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { CameraModal } from '@/components/camera-modal';
 import { socketService } from '@/lib/socket';
-import { MessageSquare, Shield, Zap } from 'lucide-react';
+import { MessageSquare, Shield, Zap, List } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Home() {
@@ -48,11 +48,21 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-slate-200 bg-white/80 backdrop-blur-sm">
         <div className="mx-auto max-w-5xl px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Shield className="h-6 w-6 text-slate-700" />
-            <span className="text-lg font-semibold text-slate-800">
-              SecFlags
-            </span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="h-6 w-6 text-slate-700" />
+              <span className="text-lg font-semibold text-slate-800">
+                SecFlags
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => router.push('/sessions')}
+              className="gap-2"
+            >
+              <List className="h-4 w-4" />
+              View Sessions
+            </Button>
           </div>
         </div>
       </header>

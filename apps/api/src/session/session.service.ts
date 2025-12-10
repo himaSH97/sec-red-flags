@@ -277,4 +277,39 @@ export class SessionService {
     
     return counts;
   }
+
+  /**
+   * Get all sessions with pagination
+   */
+  async getAllSessions(
+    page: number,
+    limit: number,
+  ): Promise<{
+    sessions: SessionDocument[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
+
+    const [sessions, total] = await Promise.all([
+      this.sessionModel
+        .find()
+        .select('-initialFaceImage') // Exclude large binary data
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.sessionModel.countDocuments().exec(),
+    ]);
+
+    return {
+      sessions,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
 }
