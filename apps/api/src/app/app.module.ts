@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ChatModule } from '../chat/chat.module';
 import { FaceModule } from '../face/face.module';
+import { SessionModule } from '../session/session.module';
 
 @Module({
   imports: [
@@ -11,8 +13,19 @@ import { FaceModule } from '../face/face.module';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
     }),
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        uri: configService.get<string>(
+          'MONGODB_URI',
+          'mongodb://secflags:secflags_dev@localhost:27017/secflags?authSource=admin',
+        ),
+      }),
+      inject: [ConfigService],
+    }),
     ChatModule,
     FaceModule,
+    SessionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

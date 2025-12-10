@@ -136,6 +136,7 @@ export class FaceService {
     confidence: number;
     isMatch: boolean;
     message: string;
+    rawResult?: FaceCompareResult;
   }> {
     const session = this.sessions.get(clientId);
 
@@ -177,6 +178,7 @@ export class FaceService {
         message: result.isMatch
           ? 'Face verified successfully'
           : `Face does not match (${result.confidence.toFixed(1)}% < ${this.confidenceThreshold}% threshold)`,
+        rawResult: result,
       };
     } catch (error) {
       this.logger.error(`Verification error for client ${clientId}: ${error.message}`);
