@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
+import { SessionService } from '../session/session.service';
 
 interface MessagePayload {
   content: string;
@@ -39,19 +40,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly chatService: ChatService,
     private readonly faceService: FaceService,
+    private readonly sessionService: SessionService,
   ) {}
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     this.logger.log(`=== Client connected: ${client.id} ===`);
     
     // Create a new chat session for this client
-    const session = this.chatService.createSession(client.id);
-    this.logger.log(`Session created: ${session.id}`);
+    const chatSession = this.chatService.createSession(client.id);
+    this.logger.log(`Chat session created: ${chatSession.id}`);
+    
+    // Create a database session for persistence
+    try {
+      await this.sessionService.createSession(chatSession.id, client.id);
+      this.logger.log(`DB session created: ${chatSession.id}`);
+    } catch (error) {
+      this.logger.error(`Failed to create DB session: ${error.message}`);
+    }
     
     // Send session info and face verification config to client
     const sessionData = {
-      sessionId: session.id,
-      createdAt: session.createdAt,
+      sessionId: chatSession.id,
+      createdAt: chatSession.createdAt,
       faceVerification: {
         checkIntervalMs: this.faceService.checkIntervalMs,
         confidenceThreshold: this.faceService.confidenceThreshold,
@@ -61,12 +71,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.emit('session', sessionData);
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
     
-    // Clean up sessions
+    // Clean up in-memory sessions
     this.chatService.removeSession(client.id);
     this.faceService.removeSession(client.id);
+    
+    // Note: We intentionally do NOT delete the DB session on disconnect
+    // to preserve the session history for auditing/analytics
   }
 
   @SubscribeMessage('message')
@@ -106,18 +119,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Payload length: ${payload?.imageBase64?.length || 0}`);
 
     try {
-      // Store the reference face
-      const session = this.faceService.storeReferenceFace(
+      // Store the reference face in memory
+      const faceSession = this.faceService.storeReferenceFace(
         client.id,
         payload.imageBase64,
       );
-      this.logger.log(`Face stored successfully for session: ${session.clientId}`);
+      this.logger.log(`Face stored successfully for session: ${faceSession.clientId}`);
+
+      // Store the initial face image in the database
+      const chatSession = this.chatService.getSession(client.id);
+      if (chatSession) {
+        const faceImageBuffer = Buffer.from(
+          payload.imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+          'base64',
+        );
+        await this.sessionService.updateFaceImage(chatSession.id, faceImageBuffer);
+        this.logger.log(`Face image persisted to DB for session: ${chatSession.id}`);
+      }
 
       // Confirm to client
       const response = {
         success: true,
         message: 'Reference face stored successfully',
-        createdAt: session.createdAt,
+        createdAt: faceSession.createdAt,
       };
       this.logger.log(`Emitting face:reference:stored: ${JSON.stringify(response)}`);
       client.emit('face:reference:stored', response);
@@ -143,6 +167,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.id,
         payload.imageBase64,
       );
+
+      // Log the face recognition event to the database
+      const chatSession = this.chatService.getSession(client.id);
+      if (chatSession && result.rawResult) {
+        await this.sessionService.logFaceRecognitionEvent(
+          chatSession.id,
+          result.confidence,
+          result.isMatch,
+          result.rawResult as unknown as Record<string, unknown>,
+          result.message,
+        );
+      }
 
       if (result.isMatch) {
         // Face verified successfully
