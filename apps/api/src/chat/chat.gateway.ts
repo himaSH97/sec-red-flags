@@ -12,7 +12,8 @@ import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
-import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType } from '@sec-flags/shared';
+import { KeystrokeService } from '../keystroke/keystroke.service';
+import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType, KeystrokeBatchPayload } from '@sec-flags/shared';
 
 interface MessagePayload {
   content: string;
@@ -59,7 +60,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly chatService: ChatService,
     private readonly faceService: FaceService,
-    private readonly sessionService: SessionService
+    private readonly sessionService: SessionService,
+    private readonly keystrokeService: KeystrokeService
   ) {}
 
   async handleConnection(client: Socket) {
@@ -501,6 +503,34 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.debug(
         `[ClientEvent] Details: ${JSON.stringify(payload.data)}`
       );
+    }
+  }
+
+  @SubscribeMessage('keystroke:batch')
+  async handleKeystrokeBatch(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: KeystrokeBatchPayload
+  ): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+    
+    if (!chatSession) {
+      this.logger.warn(`[Keystroke] No session found for client ${client.id}`);
+      return;
+    }
+
+    // Override sessionId with server-side session ID for security
+    const batchPayload = {
+      ...payload,
+      sessionId: chatSession.id,
+    };
+
+    try {
+      await this.keystrokeService.saveBatch(batchPayload);
+      this.logger.log(
+        `[Keystroke] Batch #${payload.batchIndex} saved for session ${chatSession.id} (${payload.keystrokes.length} keystrokes)`
+      );
+    } catch (error) {
+      this.logger.error(`[Keystroke] Failed to save batch: ${error.message}`);
     }
   }
 }

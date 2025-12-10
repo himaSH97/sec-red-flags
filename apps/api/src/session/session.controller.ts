@@ -1,9 +1,13 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common';
 import { SessionService } from './session.service';
+import { KeystrokeAnalyticsService } from '../keystroke/keystroke-analytics.service';
 
 @Controller('sessions')
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly keystrokeAnalyticsService: KeystrokeAnalyticsService,
+  ) {}
 
   /**
    * Get paginated list of sessions
@@ -36,6 +40,21 @@ export class SessionController {
   @Get(':sessionId/events')
   async getSessionEvents(@Param('sessionId') sessionId: string) {
     return this.sessionService.getSessionEvents(sessionId);
+  }
+
+  /**
+   * Get typing rhythm analysis for a session
+   * GET /sessions/:sessionId/typing-analysis
+   */
+  @Get(':sessionId/typing-analysis')
+  async getTypingAnalysis(@Param('sessionId') sessionId: string) {
+    const analysis = await this.keystrokeAnalyticsService.analyzeSession(sessionId);
+    
+    if (!analysis) {
+      throw new NotFoundException(`No keystroke data found for session ${sessionId}`);
+    }
+    
+    return analysis;
   }
 }
 

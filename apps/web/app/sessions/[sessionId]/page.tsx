@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SessionTimeline } from '@/components/ui/session-timeline';
-import { sessionApi, Session, SessionEvent } from '@/lib/api';
+import { sessionApi, Session, SessionEvent, TypingAnalysis } from '@/lib/api';
 import {
   getEventSeverity,
   getSeverityColors,
@@ -28,6 +28,13 @@ import {
   ChevronDown,
   ChevronUp,
   Filter,
+  Keyboard,
+  Gauge,
+  Timer,
+  Zap,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -112,6 +119,7 @@ export default function SessionDetailPage() {
   
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [typingAnalysis, setTypingAnalysis] = useState<TypingAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -129,9 +137,10 @@ export default function SessionDetailPage() {
       setError(null);
       
       try {
-        const [sessionData, eventsData] = await Promise.all([
+        const [sessionData, eventsData, analysisData] = await Promise.all([
           sessionApi.getSession(sessionId),
           sessionApi.getSessionEvents(sessionId),
+          sessionApi.getTypingAnalysis(sessionId),
         ]);
         
         setSession(sessionData);
@@ -139,6 +148,7 @@ export default function SessionDetailPage() {
         setEvents(eventsData.sort((a, b) => 
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         ));
+        setTypingAnalysis(analysisData);
       } catch (err) {
         console.error('Failed to fetch session data:', err);
         setError('Failed to load session data. Make sure the API server is running.');
@@ -313,6 +323,171 @@ export default function SessionDetailPage() {
                       </div>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Typing Rhythm Analysis Card */}
+            {typingAnalysis && (
+              <Card className="border-slate-200/80 bg-white/80 backdrop-blur-sm">
+                <CardHeader className="pb-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                      <Keyboard className="h-5 w-5" />
+                      Typing Rhythm Analysis
+                    </CardTitle>
+                    {/* Risk Badge */}
+                    <div
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium',
+                        typingAnalysis.riskLevel === 'low' && 'bg-emerald-100 text-emerald-700',
+                        typingAnalysis.riskLevel === 'medium' && 'bg-amber-100 text-amber-700',
+                        typingAnalysis.riskLevel === 'high' && 'bg-red-100 text-red-700'
+                      )}
+                    >
+                      {typingAnalysis.riskLevel === 'low' && <ShieldCheck className="h-4 w-4" />}
+                      {typingAnalysis.riskLevel === 'medium' && <Shield className="h-4 w-4" />}
+                      {typingAnalysis.riskLevel === 'high' && <ShieldAlert className="h-4 w-4" />}
+                      <span>Risk: {typingAnalysis.riskScore}/100</span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {/* Metrics Grid */}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+                    {/* WPM Card */}
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100">
+                        <Gauge className="h-4 w-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          Typing Speed
+                        </p>
+                        <p className="text-lg font-semibold text-slate-800">
+                          {typingAnalysis.speed.avgWPM} WPM
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Peak: {typingAnalysis.speed.peakWPM} WPM
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Keystrokes Card */}
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100">
+                        <Keyboard className="h-4 w-4 text-purple-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          Total Keystrokes
+                        </p>
+                        <p className="text-lg font-semibold text-slate-800">
+                          {typingAnalysis.totalKeystrokes.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {typingAnalysis.totalCharacters.toLocaleString()} characters
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Corrections Card */}
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100">
+                        <Zap className="h-4 w-4 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          Corrections
+                        </p>
+                        <p className="text-lg font-semibold text-slate-800">
+                          {typingAnalysis.corrections.correctionRatio}%
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {typingAnalysis.corrections.totalCorrections} backspaces
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Timing Card */}
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100">
+                        <Timer className="h-4 w-4 text-emerald-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          Key Interval
+                        </p>
+                        <p className="text-lg font-semibold text-slate-800">
+                          {typingAnalysis.interKeyInterval.avg}ms
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          σ = {typingAnalysis.interKeyInterval.stdDev}ms
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Suspicious Patterns */}
+                  {typingAnalysis.suspiciousPatterns.length > 0 && (
+                    <div className="border-t border-slate-200 pt-4">
+                      <h4 className="text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        Suspicious Patterns Detected
+                      </h4>
+                      <div className="space-y-2">
+                        {typingAnalysis.suspiciousPatterns.map((pattern, index) => (
+                          <div
+                            key={index}
+                            className={cn(
+                              'flex items-center justify-between px-3 py-2 rounded-lg text-sm',
+                              pattern.severity === 'low' && 'bg-blue-50 text-blue-700',
+                              pattern.severity === 'medium' && 'bg-amber-50 text-amber-700',
+                              pattern.severity === 'high' && 'bg-red-50 text-red-700'
+                            )}
+                          >
+                            <span>{pattern.description}</span>
+                            <span className="font-medium">+{pattern.contribution} pts</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Burst Analysis */}
+                  {typingAnalysis.bursts.burstCount > 0 && (
+                    <div className="border-t border-slate-200 pt-4 mt-4">
+                      <h4 className="text-sm font-medium text-slate-700 mb-3">
+                        Burst Analysis
+                      </h4>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="text-center p-2 rounded-lg bg-slate-50">
+                          <p className="text-lg font-semibold text-slate-800">
+                            {typingAnalysis.bursts.burstCount}
+                          </p>
+                          <p className="text-xs text-slate-500">Total Bursts</p>
+                        </div>
+                        <div className="text-center p-2 rounded-lg bg-slate-50">
+                          <p className="text-lg font-semibold text-slate-800">
+                            {typingAnalysis.bursts.avgBurstSize}
+                          </p>
+                          <p className="text-xs text-slate-500">Avg Burst Size</p>
+                        </div>
+                        <div className={cn(
+                          'text-center p-2 rounded-lg',
+                          typingAnalysis.bursts.burstsAfterLongPause > 3 ? 'bg-amber-50' : 'bg-slate-50'
+                        )}>
+                          <p className={cn(
+                            'text-lg font-semibold',
+                            typingAnalysis.bursts.burstsAfterLongPause > 3 ? 'text-amber-700' : 'text-slate-800'
+                          )}>
+                            {typingAnalysis.bursts.burstsAfterLongPause}
+                          </p>
+                          <p className="text-xs text-slate-500">After Long Pause</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}

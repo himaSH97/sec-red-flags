@@ -20,6 +20,7 @@ import {
   ExtendedTrackingMetrics,
 } from '@/lib/face-tracking';
 import { clientEventsService } from '@/lib/client-events';
+import { keystrokeLogger } from '@/lib/keystroke-logger';
 import {
   FaceTrackingEventPayload,
   FaceTrackingEventType,
@@ -27,6 +28,7 @@ import {
   TrackingEventSeverity,
   ClientEvent,
   ClientEventType,
+  KeystrokeBatchPayload,
 } from '@sec-flags/shared';
 import {
   ArrowLeft,
@@ -226,6 +228,10 @@ export default function ChatPage() {
     
     // Cleanup client events service
     clientEventsService.cleanup();
+    
+    // Flush and cleanup keystroke logger
+    keystrokeLogger.forceFlush();
+    keystrokeLogger.cleanup();
     
     // Disconnect socket
     socketService.disconnect();
@@ -967,6 +973,29 @@ export default function ChatPage() {
       clientEventsService.cleanup();
     };
   }, []);
+
+  // Initialize keystroke logger when session is established
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    console.log('[ChatPage] Initializing keystroke logger for session:', sessionId);
+
+    // Initialize with callback to send batches to backend
+    keystrokeLogger.initialize(sessionId, (batch: KeystrokeBatchPayload) => {
+      if (socketService.isConnected()) {
+        socketService.sendKeystrokeBatch(batch);
+      } else {
+        console.warn('[ChatPage] Cannot send keystroke batch - socket not connected');
+      }
+    });
+
+    return () => {
+      console.log('[ChatPage] Cleaning up keystroke logger...');
+      keystrokeLogger.cleanup();
+    };
+  }, [sessionId]);
 
   // Set up face tracking interval (separate from verification)
   useEffect(() => {

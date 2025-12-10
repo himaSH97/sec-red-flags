@@ -104,6 +104,74 @@ export interface SessionEvent {
   rawData?: Record<string, unknown>;
 }
 
+// Typing Analysis types
+export interface InterKeyIntervalStats {
+  count: number;
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  stdDev: number;
+  variance: number;
+}
+
+export interface CorrectionMetrics {
+  backspaceCount: number;
+  deleteCount: number;
+  totalCorrections: number;
+  correctionRatio: number;
+}
+
+export interface SpeedMetrics {
+  avgWPM: number;
+  peakWPM: number;
+  avgCPM: number;
+  peakCPM: number;
+}
+
+export interface BurstMetrics {
+  burstCount: number;
+  avgBurstSize: number;
+  maxBurstSize: number;
+  burstsAfterLongPause: number;
+  longPauseThresholdMs: number;
+}
+
+export interface SpeedWindow {
+  startTime: number;
+  endTime: number;
+  keystrokeCount: number;
+  characterCount: number;
+  wpm: number;
+  cpm: number;
+}
+
+export interface SuspiciousPattern {
+  code: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  contribution: number;
+}
+
+export type RiskLevel = 'low' | 'medium' | 'high';
+
+export interface TypingAnalysis {
+  sessionId: string;
+  analyzedAt: string;
+  totalKeystrokes: number;
+  totalCharacters: number;
+  totalBatches: number;
+  sessionDurationMs: number;
+  interKeyInterval: InterKeyIntervalStats;
+  speed: SpeedMetrics;
+  corrections: CorrectionMetrics;
+  bursts: BurstMetrics;
+  speedOverTime: SpeedWindow[];
+  riskScore: number;
+  riskLevel: RiskLevel;
+  suspiciousPatterns: SuspiciousPattern[];
+}
+
 // Session API functions
 export const sessionApi = {
   // Get paginated sessions
@@ -124,6 +192,17 @@ export const sessionApi = {
   getSessionEvents: async (sessionId: string): Promise<SessionEvent[]> => {
     const response = await api.get<SessionEvent[]>(`/sessions/${sessionId}/events`);
     return response.data;
+  },
+
+  // Get typing analysis for a session
+  getTypingAnalysis: async (sessionId: string): Promise<TypingAnalysis | null> => {
+    try {
+      const response = await api.get<TypingAnalysis>(`/sessions/${sessionId}/typing-analysis`);
+      return response.data;
+    } catch (error) {
+      // Return null if no keystroke data exists
+      return null;
+    }
   },
 };
 

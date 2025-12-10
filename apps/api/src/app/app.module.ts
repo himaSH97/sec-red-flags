@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { ChatModule } from '../chat/chat.module';
 import { FaceModule } from '../face/face.module';
 import { SessionModule } from '../session/session.module';
+import { KeystrokeModule } from '../keystroke/keystroke.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { SessionModule } from '../session/session.module';
     ChatModule,
     FaceModule,
     SessionModule,
+    KeystrokeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

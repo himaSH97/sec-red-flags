@@ -3,10 +3,11 @@ import {
   FaceTrackingEventType,
   FaceTrackingEventPayload,
   ClientEventPayload,
+  KeystrokeBatchPayload,
 } from '@sec-flags/shared';
 
 // Re-export for convenience
-export type { FaceTrackingEventType, FaceTrackingEventPayload, ClientEventPayload };
+export type { FaceTrackingEventType, FaceTrackingEventPayload, ClientEventPayload, KeystrokeBatchPayload };
 
 export interface Message {
   id: string;
@@ -287,6 +288,16 @@ class SocketService {
     }
     console.log('[SocketService] 📡 Sending client event:', event.type, event.message);
     this.socket.emit('client:event', event);
+  }
+
+  // Send keystroke batch
+  sendKeystrokeBatch(batch: KeystrokeBatchPayload): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot send keystroke batch - not connected');
+      return;
+    }
+    console.log(`[SocketService] ⌨️ Sending keystroke batch #${batch.batchIndex} (${batch.keystrokes.length} keystrokes)`);
+    this.socket.emit('keystroke:batch', batch);
   }
 }
 
