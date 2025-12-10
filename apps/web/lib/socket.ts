@@ -1,4 +1,11 @@
 import { io, Socket } from 'socket.io-client';
+import {
+  FaceTrackingEventType,
+  FaceTrackingEventPayload,
+} from '@sec-flags/shared';
+
+// Re-export for convenience
+export type { FaceTrackingEventType, FaceTrackingEventPayload };
 
 export interface Message {
   id: string;
@@ -259,6 +266,16 @@ class SocketService {
     }
     console.log('[SocketService] Sending face verification');
     this.socket.emit('face:verify', { imageBase64 });
+  }
+
+  // Send face tracking event (security-relevant events)
+  sendFaceTrackingEvent(event: FaceTrackingEventPayload): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot send tracking event - not connected');
+      return;
+    }
+    console.log('[SocketService] 📡 Sending face tracking event:', event.type, event.message);
+    this.socket.emit('face:tracking', event);
   }
 }
 

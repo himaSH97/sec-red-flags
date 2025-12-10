@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
+import { FaceTrackingEventPayload, FaceTrackingEventType } from '@sec-flags/shared';
 
 interface MessagePayload {
   content: string;
@@ -24,6 +25,24 @@ interface FaceReferencePayload {
 interface FaceVerifyPayload {
   imageBase64: string;
 }
+
+// Warning event types that require immediate attention
+const WARNING_EVENT_TYPES: FaceTrackingEventType[] = [
+  'face_away',
+  'face_not_detected',
+  'looking_away',
+  'talking',
+  'eyes_closed_extended',
+  'excessive_blinking',
+  'squinting_detected',
+  'head_movement_excessive',
+  'head_tilted',
+  'expression_confused',
+  'lip_reading_detected',
+  'tab_switched_away',
+  'window_blur',
+  'multiple_faces_detected',
+];
 
 @WebSocketGateway({
   cors: {
@@ -40,16 +59,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly chatService: ChatService,
     private readonly faceService: FaceService,
-    private readonly sessionService: SessionService,
+    private readonly sessionService: SessionService
   ) {}
 
   async handleConnection(client: Socket) {
     this.logger.log(`=== Client connected: ${client.id} ===`);
-    
+
     // Create a new chat session for this client
     const chatSession = this.chatService.createSession(client.id);
     this.logger.log(`Chat session created: ${chatSession.id}`);
-    
+
     // Create a database session for persistence
     try {
       await this.sessionService.createSession(chatSession.id, client.id);
@@ -57,7 +76,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       this.logger.error(`Failed to create DB session: ${error.message}`);
     }
-    
+
     // Send session info and face verification config to client
     const sessionData = {
       sessionId: chatSession.id,
@@ -73,11 +92,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    
+
     // Clean up in-memory sessions
     this.chatService.removeSession(client.id);
     this.faceService.removeSession(client.id);
-    
+
     // Note: We intentionally do NOT delete the DB session on disconnect
     // to preserve the session history for auditing/analytics
   }
@@ -85,7 +104,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('message')
   async handleMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: MessagePayload,
+    @MessageBody() payload: MessagePayload
   ): Promise<void> {
     this.logger.log(`Message from ${client.id}: ${payload.content}`);
 
@@ -93,7 +112,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Process the message and get response
       const response: ChatMessage = await this.chatService.processMessage(
         client.id,
-        payload.content,
+        payload.content
       );
 
       // Send response back to client
@@ -102,7 +121,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     } catch (error) {
       this.logger.error(`Error processing message: ${error.message}`);
-      
+
       // Send error to client
       client.emit('error', {
         message: 'Failed to process message. Please try again.',
@@ -113,7 +132,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('face:reference')
   async handleFaceReference(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: FaceReferencePayload,
+    @MessageBody() payload: FaceReferencePayload
   ): Promise<void> {
     this.logger.log(`=== Face reference received from ${client.id} ===`);
     this.logger.log(`Payload length: ${payload?.imageBase64?.length || 0}`);
@@ -122,19 +141,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Store the reference face in memory
       const faceSession = this.faceService.storeReferenceFace(
         client.id,
-        payload.imageBase64,
+        payload.imageBase64
       );
-      this.logger.log(`Face stored successfully for session: ${faceSession.clientId}`);
+      this.logger.log(
+        `Face stored successfully for session: ${faceSession.clientId}`
+      );
 
       // Store the initial face image in the database
       const chatSession = this.chatService.getSession(client.id);
       if (chatSession) {
         const faceImageBuffer = Buffer.from(
           payload.imageBase64.replace(/^data:image\/\w+;base64,/, ''),
-          'base64',
+          'base64'
         );
-        await this.sessionService.updateFaceImage(chatSession.id, faceImageBuffer);
-        this.logger.log(`Face image persisted to DB for session: ${chatSession.id}`);
+        await this.sessionService.updateFaceImage(
+          chatSession.id,
+          faceImageBuffer
+        );
+        this.logger.log(
+          `Face image persisted to DB for session: ${chatSession.id}`
+        );
       }
 
       // Confirm to client
@@ -143,11 +169,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         message: 'Reference face stored successfully',
         createdAt: faceSession.createdAt,
       };
-      this.logger.log(`Emitting face:reference:stored: ${JSON.stringify(response)}`);
+      this.logger.log(
+        `Emitting face:reference:stored: ${JSON.stringify(response)}`
+      );
       client.emit('face:reference:stored', response);
     } catch (error) {
       this.logger.error(`Error storing reference face: ${error.message}`);
-      
+
       client.emit('face:reference:stored', {
         success: false,
         message: 'Failed to store reference face',
@@ -158,14 +186,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('face:verify')
   async handleFaceVerify(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: FaceVerifyPayload,
+    @MessageBody() payload: FaceVerifyPayload
   ): Promise<void> {
     this.logger.log(`Face verification request from ${client.id}`);
 
     try {
       const result = await this.faceService.verifyFace(
         client.id,
-        payload.imageBase64,
+        payload.imageBase64
       );
 
       // Log the face recognition event to the database
@@ -176,7 +204,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           result.confidence,
           result.isMatch,
           result.rawResult as unknown as Record<string, unknown>,
-          result.message,
+          result.message
         );
       }
 
@@ -191,16 +219,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Face verification failed
         const session = this.faceService.getSession(client.id);
         const maxRetries = 2;
-        
+
         if (session && session.failedAttempts >= maxRetries) {
           // Too many failed attempts - notify client to disconnect
           client.emit('face:failed', {
             success: false,
             confidence: result.confidence,
-            message: 'Face verification failed. Session terminated for security.',
+            message:
+              'Face verification failed. Session terminated for security.',
             shouldDisconnect: true,
           });
-          
+
           // Disconnect the client after a short delay
           setTimeout(() => {
             client.disconnect(true);
@@ -217,12 +246,154 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
     } catch (error) {
       this.logger.error(`Error verifying face: ${error.message}`);
-      
+
       client.emit('face:result', {
         success: false,
         confidence: 0,
         message: 'Face verification error. Please try again.',
       });
+    }
+  }
+
+  @SubscribeMessage('face:tracking')
+  async handleFaceTracking(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: FaceTrackingEventPayload
+  ): Promise<void> {
+    const timestamp = new Date(payload.timestamp).toISOString();
+    const isWarning = WARNING_EVENT_TYPES.includes(payload.type);
+
+    // Log to console
+    this.logTrackingEvent(client.id, payload, isWarning, timestamp);
+
+    // Persist to MongoDB
+    try {
+      const chatSession = this.chatService.getSession(client.id);
+      if (chatSession) {
+        await this.sessionService.logFaceTrackingEvent(chatSession.id, payload);
+        this.logger.debug(`[FaceTracking] Event persisted to DB: ${payload.type}`);
+      } else {
+        this.logger.warn(`[FaceTracking] No session found for client ${client.id}, event not persisted`);
+      }
+    } catch (error) {
+      this.logger.error(`[FaceTracking] Failed to persist event: ${error.message}`);
+    }
+  }
+
+  /**
+   * Log tracking event to console with formatted output
+   */
+  private logTrackingEvent(
+    clientId: string,
+    payload: FaceTrackingEventPayload,
+    isWarning: boolean,
+    timestamp: string
+  ): void {
+    // Format the log message based on event type
+    let logMessage = '';
+    const icon = isWarning ? '⚠️' : '✓';
+
+    switch (payload.type) {
+      // Face Position
+      case 'face_away':
+        logMessage = `${icon} FACE AWAY - ${payload.details}`;
+        break;
+      case 'face_returned':
+        logMessage = `${icon} Face returned to screen`;
+        break;
+      case 'face_not_detected':
+        logMessage = `${icon} FACE NOT DETECTED - No face visible`;
+        break;
+      case 'face_detected':
+        logMessage = `${icon} Face detected`;
+        break;
+
+      // Gaze
+      case 'looking_away':
+        logMessage = `${icon} LOOKING AWAY - Gaze: ${payload.data?.gazeDirection}`;
+        break;
+      case 'looking_back':
+        logMessage = `${icon} Eyes returned to screen`;
+        break;
+
+      // Eye State
+      case 'eyes_closed_extended':
+        logMessage = `${icon} EYES CLOSED - Duration: ${payload.data?.eyeClosureDuration?.toFixed(1)}s`;
+        break;
+      case 'eyes_opened':
+        logMessage = `${icon} Eyes opened`;
+        break;
+      case 'excessive_blinking':
+        logMessage = `${icon} EXCESSIVE BLINKING - Rate: ${payload.data?.blinkRate} blinks/min`;
+        break;
+      case 'squinting_detected':
+        logMessage = `${icon} SQUINTING - L:${payload.data?.squintLevel?.left}% R:${payload.data?.squintLevel?.right}%`;
+        break;
+
+      // Speaking
+      case 'talking':
+        logMessage = `${icon} TALKING DETECTED - Mouth: ${payload.data?.mouthOpenness}% open`;
+        break;
+      case 'stopped_talking':
+        logMessage = `${icon} Stopped talking`;
+        break;
+
+      // Head Movement
+      case 'head_movement_excessive':
+        logMessage = `${icon} EXCESSIVE HEAD MOVEMENT - ${payload.data?.headMovementCount} movements`;
+        break;
+      case 'head_tilted':
+        logMessage = `${icon} HEAD TILTED - Roll: ${payload.data?.headPose?.roll}°`;
+        break;
+      case 'head_position_normal':
+        logMessage = `${icon} Head position normal`;
+        break;
+
+      // Expression
+      case 'expression_confused':
+        logMessage = `${icon} CONFUSED EXPRESSION detected`;
+        break;
+      case 'lip_reading_detected':
+        logMessage = `${icon} LIP READING - Movement: ${payload.data?.lipMovement}%`;
+        break;
+
+      // Browser/Session
+      case 'tab_switched_away':
+        logMessage = `${icon} TAB SWITCHED AWAY - User left the tab`;
+        break;
+      case 'tab_returned':
+        logMessage = `${icon} Tab returned`;
+        break;
+      case 'window_blur':
+        logMessage = `${icon} WINDOW BLUR - Lost focus`;
+        break;
+      case 'window_focus':
+        logMessage = `${icon} Window focus regained`;
+        break;
+      case 'multiple_faces_detected':
+        logMessage = `${icon} MULTIPLE FACES - ${payload.data?.faceCount} faces detected`;
+        break;
+
+      default:
+        logMessage = `${icon} ${payload.message}`;
+    }
+
+    // Log based on severity
+    if (isWarning) {
+      this.logger.warn(
+        `[FaceTracking] Client ${clientId} | ${timestamp} | ${logMessage}`
+      );
+    } else {
+      this.logger.log(
+        `[FaceTracking] Client ${clientId} | ${timestamp} | ${logMessage}`
+      );
+    }
+
+    // Log detailed data for warnings
+    if (isWarning && payload.data) {
+      this.logger.debug(
+        `[FaceTracking] Details: ${JSON.stringify(payload.data)}`
+      );
     }
   }
 }

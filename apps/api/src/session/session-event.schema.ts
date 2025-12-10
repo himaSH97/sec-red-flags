@@ -8,11 +8,44 @@ export type SessionEventDocument = HydratedDocument<SessionEvent>;
  * Add new event types here as needed.
  */
 export enum EventType {
+  // Face Recognition (existing)
   FACE_RECOGNITION = 'FACE_RECOGNITION',
-  // Future event types can be added here:
-  // SESSION_START = 'SESSION_START',
-  // SESSION_END = 'SESSION_END',
-  // CHAT_MESSAGE = 'CHAT_MESSAGE',
+  
+  // Face Position
+  FACE_TURNED_AWAY = 'FACE_TURNED_AWAY',
+  FACE_RETURNED = 'FACE_RETURNED',
+  FACE_NOT_DETECTED = 'FACE_NOT_DETECTED',
+  FACE_DETECTED = 'FACE_DETECTED',
+  
+  // Gaze/Eye Direction
+  GAZE_AWAY = 'GAZE_AWAY',
+  GAZE_RETURNED = 'GAZE_RETURNED',
+  
+  // Eye State
+  EYES_CLOSED_EXTENDED = 'EYES_CLOSED_EXTENDED',
+  EYES_OPENED = 'EYES_OPENED',
+  EXCESSIVE_BLINKING = 'EXCESSIVE_BLINKING',
+  SQUINTING_DETECTED = 'SQUINTING_DETECTED',
+  
+  // Speaking
+  SPEAKING_DETECTED = 'SPEAKING_DETECTED',
+  SPEAKING_STOPPED = 'SPEAKING_STOPPED',
+  
+  // Head Movement
+  HEAD_MOVEMENT_EXCESSIVE = 'HEAD_MOVEMENT_EXCESSIVE',
+  HEAD_TILTED = 'HEAD_TILTED',
+  HEAD_POSITION_NORMAL = 'HEAD_POSITION_NORMAL',
+  
+  // Expression
+  EXPRESSION_CONFUSED = 'EXPRESSION_CONFUSED',
+  LIP_READING_DETECTED = 'LIP_READING_DETECTED',
+  
+  // Browser/Session
+  TAB_SWITCHED_AWAY = 'TAB_SWITCHED_AWAY',
+  TAB_RETURNED = 'TAB_RETURNED',
+  WINDOW_BLUR = 'WINDOW_BLUR',
+  WINDOW_FOCUS = 'WINDOW_FOCUS',
+  MULTIPLE_FACES_DETECTED = 'MULTIPLE_FACES_DETECTED',
 }
 
 /**
@@ -25,10 +58,39 @@ export interface FaceRecognitionEventData {
 }
 
 /**
+ * Head pose data
+ */
+export interface HeadPoseData {
+  pitch: number;
+  yaw: number;
+  roll: number;
+}
+
+/**
+ * Data structure for face tracking events
+ */
+export interface FaceTrackingEventData {
+  message: string;
+  details?: string;
+  headPose?: HeadPoseData;
+  gazeDirection?: string;
+  mouthOpenness?: number;
+  faceDetected?: boolean;
+  faceCount?: number;
+  eyeOpenness?: { left: number; right: number };
+  squintLevel?: { left: number; right: number };
+  blinkRate?: number;
+  eyeClosureDuration?: number;
+  headMovementCount?: number;
+  browDown?: number;
+  lipMovement?: number;
+}
+
+/**
  * Union type for all event data types.
  * Extend this as new event types are added.
  */
-export type EventData = FaceRecognitionEventData;
+export type EventData = FaceRecognitionEventData | FaceTrackingEventData;
 
 @Schema({ timestamps: false })
 export class SessionEvent {
@@ -53,4 +115,3 @@ export const SessionEventSchema = SchemaFactory.createForClass(SessionEvent);
 // Create compound index for efficient queries
 SessionEventSchema.index({ sessionId: 1, timestamp: -1 });
 SessionEventSchema.index({ type: 1, timestamp: -1 });
-
