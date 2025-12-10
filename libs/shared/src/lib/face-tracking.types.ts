@@ -45,7 +45,13 @@ export type FaceTrackingEventType =
   | 'tab_returned'           // Returned to tab
   | 'window_blur'            // Window lost focus
   | 'window_focus'           // Window regained focus
-  | 'multiple_faces_detected'; // More than one face in frame
+  | 'multiple_faces_detected' // More than one face in frame
+  
+  // Face Verification
+  | 'verification_started'   // Face verification check started
+  | 'verification_success'   // Face verification passed
+  | 'verification_failed'    // Face verification failed
+  | 'verification_error';    // Face verification error
 
 /**
  * Gaze direction categories

@@ -41,10 +41,10 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
 
 type VerificationStatus = 'pending' | 'verified' | 'failed' | 'checking';
 
@@ -105,7 +105,14 @@ export default function ChatPage() {
   const wasMultipleFacesRef = useRef(false);
   const wasTabHiddenRef = useRef(false);
   const wasWindowBlurredRef = useRef(false);
-  const lastToastTimeRef = useRef<Record<string, number>>({});
+  
+  // Ref to hold addTrackingEvent for use in useEffect callbacks
+  const addTrackingEventRef = useRef<(
+    type: FaceTrackingEventType,
+    message: string,
+    severity?: TrackingEventSeverity,
+    details?: string
+  ) => void>(() => {});
 
   // Capture face from video stream
   const captureFace = useCallback((): string | null => {
@@ -131,10 +138,13 @@ export default function ChatPage() {
     if (imageBase64 && socketService.isConnected()) {
       setVerificationStatus('checking');
 
-      toast.info('Verifying Face...', {
-        description: 'Periodic security check in progress',
-        duration: 2000,
-      });
+      // Log verification started to event log
+      addTrackingEventRef.current(
+        'verification_started',
+        'Face Verification Started',
+        'info',
+        'Periodic security check in progress'
+      );
 
       socketService.sendFaceVerification(imageBase64);
 
@@ -217,12 +227,6 @@ export default function ChatPage() {
     // Clear session storage
     sessionStorage.removeItem('referenceFace');
     
-    // Show toast
-    toast.success('Session Ended', {
-      description: 'Redirecting to session details...',
-      duration: 2000,
-    });
-    
     // Redirect to session page
     if (sessionId) {
       router.push(`/sessions/${sessionId}`);
@@ -253,25 +257,14 @@ export default function ChatPage() {
         const newEvents = [event, ...prev].slice(0, 100);
         return newEvents;
       });
-
-      // Show toast for important events (with rate limiting)
-      const now = Date.now();
-      const lastToastTime = lastToastTimeRef.current[type] || 0;
-      const minInterval = 2000; // Rate limit toasts
-
-      if (now - lastToastTime > minInterval) {
-        lastToastTimeRef.current[type] = now;
-
-        if (severity === 'warning') {
-          toast.warning(message, { description: details, duration: 2000 });
-        } else if (severity === 'success') {
-          toast.success(message, { description: details, duration: 2000 });
-        }
-        // Don't show info toasts to avoid spam
-      }
     },
     []
   );
+  
+  // Update ref whenever addTrackingEvent changes
+  useEffect(() => {
+    addTrackingEventRef.current = addTrackingEvent;
+  }, [addTrackingEvent]);
 
   // Send tracking event to backend
   const sendTrackingEventToBackend = useCallback(
@@ -668,10 +661,13 @@ export default function ChatPage() {
     }) => {
       console.log('Face reference stored:', result);
       if (result.success) {
-        toast.success('Face registered!', {
-          description: 'Your face has been registered for verification',
-          duration: 3000,
-        });
+        // Log to event tracking instead of toast
+        addTrackingEventRef.current(
+          'verification_success',
+          'Face Registered',
+          'success',
+          'Your face has been registered for verification'
+        );
       }
     };
 
@@ -711,26 +707,28 @@ export default function ChatPage() {
         setVerificationStatus('verified');
         setVerificationError(null);
 
-        toast.success('Face Verified', {
-          description: `Confidence: ${result.confidence.toFixed(
-            1
-          )}% (Threshold: ${threshold}%)`,
-          duration: 4000,
-        });
+        // Log success to event log
+        addTrackingEventRef.current(
+          'verification_success',
+          'Face Verified',
+          'success',
+          `Confidence: ${result.confidence.toFixed(1)}% (Threshold: ${threshold}%)`
+        );
       } else {
         setVerificationStatus('failed');
         setVerificationError(result.message);
 
-        toast.error('Face Verification Failed', {
-          description: `Confidence: ${result.confidence.toFixed(
-            1
-          )}% (Required: ${threshold}%)${
+        // Log failure to event log
+        addTrackingEventRef.current(
+          'verification_failed',
+          'Face Verification Failed',
+          'warning',
+          `Confidence: ${result.confidence.toFixed(1)}% (Required: ${threshold}%)${
             result.retriesLeft !== undefined
               ? ` - ${result.retriesLeft} retries left`
               : ''
-          }`,
-          duration: 5000,
-        });
+          }`
+        );
       }
     };
 
@@ -740,10 +738,13 @@ export default function ChatPage() {
       setVerificationStatus('failed');
       setVerificationError(result.message);
 
-      toast.error('Session Terminated', {
-        description: result.message,
-        duration: 5000,
-      });
+      // Log critical failure to event log
+      addTrackingEventRef.current(
+        'verification_error',
+        'Session Terminated',
+        'warning',
+        result.message
+      );
 
       if (result.shouldDisconnect) {
         setTimeout(() => {
@@ -770,9 +771,6 @@ export default function ChatPage() {
       // Handle connection errors
       socket.on('connect_error', (error) => {
         console.error('Socket connection error:', error);
-        toast.error('Connection failed', {
-          description: 'Could not connect to server. Is the API running?',
-        });
       });
 
       socketService.onSession(handleSession);
@@ -809,9 +807,6 @@ export default function ChatPage() {
     const initTimeout = setTimeout(() => {
       if (!gotConnected) {
         console.log('Connection timeout - not connected after 5 seconds');
-        toast.error('Connection timeout', {
-          description: 'Could not connect to chat server. Please try again.',
-        });
       }
       setIsInitializing(false);
     }, 5000);
@@ -908,17 +903,9 @@ export default function ChatPage() {
         if (isMounted) {
           console.log('[ChatPage] Face tracking service ready');
           setIsTrackingReady(true);
-          toast.success('Face Tracking Active', {
-            description: 'Monitoring facial expressions, eye movements, and more',
-            duration: 3000,
-          });
         }
       } catch (error) {
         console.error('[ChatPage] Failed to initialize face tracking:', error);
-        toast.error('Face Tracking Unavailable', {
-          description: 'Could not initialize face tracking. Some features may be limited.',
-          duration: 5000,
-        });
       }
     };
 
@@ -1097,297 +1084,300 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Face Tracking Status Bar - Enhanced */}
-      {showTrackingDebug && trackingData && (
-        <div className="border-b border-slate-200 bg-white px-4 py-2">
-          <div className="mx-auto max-w-3xl">
-            <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
-              {/* Face Position */}
-              <div
-                className={cn(
-                  'flex items-center gap-1.5 rounded-full px-2.5 py-1',
-                  !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-emerald-100 text-emerald-700'
-                )}
-              >
-                <span
-                  className={cn(
-                    'inline-flex h-1.5 w-1.5 rounded-full',
-                    !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
-                      ? 'bg-red-500'
-                      : 'bg-emerald-500'
-                  )}
-                />
-                <span className="font-medium">
-                  {!trackingData.faceDetected
-                    ? 'No Face'
-                    : Math.abs(trackingData.headPose.yaw) > 40
-                      ? 'Face Away'
-                      : 'Facing'}
-                </span>
-              </div>
-
-              {/* Gaze Direction */}
-              {trackingData.faceDetected && (
-                <div
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full px-2.5 py-1',
-                    trackingData.eyes.gazeDirection !== 'CENTER'
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-emerald-100 text-emerald-700'
-                  )}
-                >
-                  <Eye className="h-3 w-3" />
-                  <span className="font-medium">
-                    {trackingData.eyes.gazeDirection === 'CENTER'
-                      ? 'At Screen'
-                      : trackingData.eyes.gazeDirection}
-                  </span>
+      {/* Main Content - Chat and Event Log Side by Side */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Chat Area */}
+        <div className="flex flex-1 flex-col min-w-0">
+          {/* Messages Area */}
+          <ScrollArea className="flex-1">
+            <div className="mx-auto max-w-3xl px-4 py-6">
+              {messages.length === 0 ? (
+                <div className="flex h-[calc(100vh-280px)] flex-col items-center justify-center text-center">
+                  <div className="mb-4 rounded-full bg-slate-100 p-4">
+                    <Bot className="h-8 w-8 text-slate-400" />
+                  </div>
+                  <h2 className="mb-2 text-lg font-medium text-slate-700">
+                    Start a conversation
+                  </h2>
+                  <p className="max-w-sm text-sm text-slate-500">
+                    {isConnected
+                      ? 'Type your message below to begin chatting with the assistant.'
+                      : 'Waiting for connection...'}
+                  </p>
                 </div>
-              )}
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={cn(
+                        'flex gap-3',
+                        message.role === 'user' ? 'justify-end' : 'justify-start'
+                      )}
+                    >
+                      {message.role === 'assistant' && (
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200">
+                          <Bot className="h-4 w-4 text-slate-600" />
+                        </div>
+                      )}
+                      <div
+                        className={cn(
+                          'max-w-[80%] rounded-2xl px-4 py-2.5',
+                          message.role === 'user'
+                            ? 'bg-slate-800 text-white'
+                            : 'bg-white text-slate-800 shadow-sm border border-slate-200'
+                        )}
+                      >
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                          {message.content}
+                        </p>
+                      </div>
+                      {message.role === 'user' && (
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800">
+                          <User className="h-4 w-4 text-white" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
 
-              {/* Talking Detection */}
-              {trackingData.faceDetected && (
-                <div
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full px-2.5 py-1',
-                    trackingData.expression.mouthOpen > 30
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-slate-100 text-slate-600'
-                  )}
-                >
-                  <span className="font-medium">
-                    {trackingData.expression.mouthOpen > 30
-                      ? `Talking ${trackingData.expression.mouthOpen}%`
-                      : 'Silent'}
-                  </span>
-                </div>
-              )}
-
-              {/* Multiple Faces Warning */}
-              {trackingData.faceCount && trackingData.faceCount > 1 && (
-                <div className="flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-red-700">
-                  <span className="font-medium">{trackingData.faceCount} Faces!</span>
-                </div>
-              )}
-
-              {/* Extended Metrics */}
-              {extendedMetrics && trackingData.faceDetected && (
-                <>
-                  {/* Blink Rate */}
-                  {extendedMetrics.blinkRate > 15 && (
-                    <div className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
-                      <span className="font-medium">{extendedMetrics.blinkRate} blinks/min</span>
+                  {/* Loading indicator */}
+                  {isLoading && (
+                    <div className="flex gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200">
+                        <Bot className="h-4 w-4 text-slate-600" />
+                      </div>
+                      <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-2.5 shadow-sm border border-slate-200">
+                        <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                        <span className="text-sm text-slate-500">Thinking...</span>
+                      </div>
                     </div>
                   )}
 
-                  {/* Head Tilt */}
-                  {extendedMetrics.isHeadTilted && (
-                    <div className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
-                      <span className="font-medium">Tilted {trackingData.headPose.roll}°</span>
-                    </div>
-                  )}
-
-                  {/* Squinting */}
-                  {extendedMetrics.isSquinting && (
-                    <div className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
-                      <span className="font-medium">Squinting</span>
-                    </div>
-                  )}
-                </>
+                  <div ref={messagesEndRef} />
+                </div>
               )}
             </div>
+          </ScrollArea>
+
+          {/* Input Area */}
+          <div className="border-t border-slate-200 bg-white">
+            <form
+              onSubmit={handleSubmit}
+              className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4"
+            >
+              <Input
+                ref={inputRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={isConnected ? 'Type your message...' : 'Connecting...'}
+                disabled={isLoading || !isConnected}
+                className="flex-1 border-slate-300 bg-slate-50 focus-visible:ring-slate-400"
+              />
+              <Button
+                type="submit"
+                disabled={!inputValue.trim() || isLoading || !isConnected}
+                className="shrink-0"
+              >
+                {isLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </form>
           </div>
         </div>
-      )}
 
-      {/* Face Tracking Event Log */}
-      {showTrackingDebug && (
-        <div className="border-b border-slate-200 bg-slate-50">
-          <div className="mx-auto max-w-3xl">
-            {/* Event Log Header */}
+        {/* Event Log Sidebar - Right Side */}
+        {showTrackingDebug && (
+          <div className={cn(
+            'flex flex-col border-l border-slate-200 bg-white transition-all duration-300',
+            showEventLog ? 'w-80' : 'w-12'
+          )}>
+            {/* Sidebar Header */}
             <button
               onClick={() => setShowEventLog(!showEventLog)}
-              className="flex w-full items-center justify-between px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+              className="flex items-center gap-2 px-3 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors"
+              title={showEventLog ? 'Collapse event log' : 'Expand event log'}
             >
-              <div className="flex items-center gap-2">
-                <Activity className="h-3 w-3" />
-                <span>Tracking Event Log</span>
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-slate-500">
-                  {trackingEvents.length}
-                </span>
-              </div>
               {showEventLog ? (
-                <ChevronUp className="h-4 w-4" />
+                <>
+                  <Activity className="h-4 w-4 text-slate-600" />
+                  <span className="flex-1 text-sm font-medium text-slate-700 text-left">Tracking</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                    {trackingEvents.length}
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </>
               ) : (
-                <ChevronDown className="h-4 w-4" />
+                <div className="flex flex-col items-center gap-1">
+                  <Activity className="h-4 w-4 text-slate-600" />
+                  <span className="text-[10px] text-slate-500">{trackingEvents.length}</span>
+                </div>
               )}
             </button>
 
-            {/* Event Log Content */}
-            {showEventLog && (
-              <div
-                ref={eventLogRef}
-                className="max-h-40 overflow-y-auto border-t border-slate-200 bg-white"
-              >
-                {trackingEvents.length === 0 ? (
-                  <div className="px-4 py-3 text-center text-xs text-slate-400">
-                    No events yet. Face tracking events will appear here.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-slate-100">
-                    {trackingEvents.map((event) => (
-                      <div
-                        key={event.id}
-                        className={cn(
-                          'flex items-start gap-3 px-4 py-2 text-xs',
-                          event.severity === 'warning' && 'bg-amber-50',
-                          event.severity === 'success' && 'bg-emerald-50'
-                        )}
-                      >
-                        {/* Event Icon */}
-                        <div
-                          className={cn(
-                            'mt-0.5 h-2 w-2 shrink-0 rounded-full',
-                            event.severity === 'info' && 'bg-blue-400',
-                            event.severity === 'warning' && 'bg-amber-400',
-                            event.severity === 'success' && 'bg-emerald-400'
-                          )}
-                        />
-
-                        {/* Event Content */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={cn(
-                                'font-medium',
-                                event.severity === 'info' && 'text-slate-700',
-                                event.severity === 'warning' && 'text-amber-700',
-                                event.severity === 'success' && 'text-emerald-700'
-                              )}
-                            >
-                              {event.message}
-                            </span>
-                          </div>
-                          {event.details && (
-                            <p className="mt-0.5 text-slate-500 truncate">
-                              {event.details}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Timestamp */}
-                        <span className="shrink-0 text-slate-400">
-                          {formatTime(event.timestamp)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Messages Area */}
-      <ScrollArea className="flex-1">
-        <div className="mx-auto max-w-3xl px-4 py-6">
-          {messages.length === 0 ? (
-            <div className="flex h-[calc(100vh-220px)] flex-col items-center justify-center text-center">
-              <div className="mb-4 rounded-full bg-slate-100 p-4">
-                <Bot className="h-8 w-8 text-slate-400" />
-              </div>
-              <h2 className="mb-2 text-lg font-medium text-slate-700">
-                Start a conversation
-              </h2>
-              <p className="max-w-sm text-sm text-slate-500">
-                {isConnected
-                  ? 'Type your message below to begin chatting with the assistant.'
-                  : 'Waiting for connection...'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={cn(
-                    'flex gap-3',
-                    message.role === 'user' ? 'justify-end' : 'justify-start'
-                  )}
-                >
-                  {message.role === 'assistant' && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200">
-                      <Bot className="h-4 w-4 text-slate-600" />
-                    </div>
-                  )}
+            {/* Status Badges - Live Tracking Status */}
+            {showEventLog && trackingData && (
+              <div className="border-b border-slate-200 bg-slate-50 px-3 py-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {/* Face Position */}
                   <div
                     className={cn(
-                      'max-w-[80%] rounded-2xl px-4 py-2.5',
-                      message.role === 'user'
-                        ? 'bg-slate-800 text-white'
-                        : 'bg-white text-slate-800 shadow-sm border border-slate-200'
+                      'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]',
+                      !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-emerald-100 text-emerald-700'
                     )}
                   >
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                      {message.content}
-                    </p>
+                    <span
+                      className={cn(
+                        'inline-flex h-1.5 w-1.5 rounded-full',
+                        !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                          ? 'bg-red-500'
+                          : 'bg-emerald-500'
+                      )}
+                    />
+                    <span className="font-medium">
+                      {!trackingData.faceDetected
+                        ? 'No Face'
+                        : Math.abs(trackingData.headPose.yaw) > 40
+                          ? 'Away'
+                          : 'Facing'}
+                    </span>
                   </div>
-                  {message.role === 'user' && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800">
-                      <User className="h-4 w-4 text-white" />
+
+                  {/* Gaze Direction */}
+                  {trackingData.faceDetected && (
+                    <div
+                      className={cn(
+                        'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]',
+                        trackingData.eyes.gazeDirection !== 'CENTER'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-emerald-100 text-emerald-700'
+                      )}
+                    >
+                      <Eye className="h-2.5 w-2.5" />
+                      <span className="font-medium">
+                        {trackingData.eyes.gazeDirection === 'CENTER'
+                          ? 'Screen'
+                          : trackingData.eyes.gazeDirection}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Talking Detection */}
+                  {trackingData.faceDetected && (
+                    <div
+                      className={cn(
+                        'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]',
+                        trackingData.expression.mouthOpen > 30
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-slate-100 text-slate-600'
+                      )}
+                    >
+                      <span className="font-medium">
+                        {trackingData.expression.mouthOpen > 30 ? 'Talking' : 'Silent'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Multiple Faces Warning */}
+                  {trackingData.faceCount && trackingData.faceCount > 1 && (
+                    <div className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] text-red-700">
+                      <span className="font-medium">{trackingData.faceCount} Faces</span>
+                    </div>
+                  )}
+
+                  {/* Extended Metrics */}
+                  {extendedMetrics && trackingData.faceDetected && (
+                    <>
+                      {extendedMetrics.blinkRate > 15 && (
+                        <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                          <span className="font-medium">{extendedMetrics.blinkRate}/min</span>
+                        </div>
+                      )}
+                      {extendedMetrics.isHeadTilted && (
+                        <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                          <span className="font-medium">Tilted</span>
+                        </div>
+                      )}
+                      {extendedMetrics.isSquinting && (
+                        <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                          <span className="font-medium">Squint</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Event Log Content */}
+            {showEventLog && (
+              <ScrollArea className="flex-1">
+                <div ref={eventLogRef}>
+                  {trackingEvents.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-xs text-slate-400">
+                      No events yet.
+                      <br />
+                      Events will appear here.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {trackingEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className={cn(
+                            'px-3 py-2.5 text-xs',
+                            event.severity === 'warning' && 'bg-amber-50',
+                            event.severity === 'success' && 'bg-emerald-50'
+                          )}
+                        >
+                          <div className="flex items-start gap-2">
+                            {/* Event Icon */}
+                            <div
+                              className={cn(
+                                'mt-1 h-2 w-2 shrink-0 rounded-full',
+                                event.severity === 'info' && 'bg-blue-400',
+                                event.severity === 'warning' && 'bg-amber-400',
+                                event.severity === 'success' && 'bg-emerald-400'
+                              )}
+                            />
+
+                            {/* Event Content */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span
+                                  className={cn(
+                                    'font-medium truncate',
+                                    event.severity === 'info' && 'text-slate-700',
+                                    event.severity === 'warning' && 'text-amber-700',
+                                    event.severity === 'success' && 'text-emerald-700'
+                                  )}
+                                >
+                                  {event.message}
+                                </span>
+                                <span className="shrink-0 text-slate-400 text-[10px]">
+                                  {formatTime(event.timestamp)}
+                                </span>
+                              </div>
+                              {event.details && (
+                                <p className="mt-0.5 text-slate-500 text-[11px] line-clamp-2">
+                                  {event.details}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-              ))}
-
-              {/* Loading indicator */}
-              {isLoading && (
-                <div className="flex gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200">
-                    <Bot className="h-4 w-4 text-slate-600" />
-                  </div>
-                  <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-2.5 shadow-sm border border-slate-200">
-                    <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                    <span className="text-sm text-slate-500">Thinking...</span>
-                  </div>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
-      </ScrollArea>
-
-      {/* Input Area */}
-      <div className="border-t border-slate-200 bg-white">
-        <form
-          onSubmit={handleSubmit}
-          className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-4"
-        >
-          <Input
-            ref={inputRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            placeholder={isConnected ? 'Type your message...' : 'Connecting...'}
-            disabled={isLoading || !isConnected}
-            className="flex-1 border-slate-300 bg-slate-50 focus-visible:ring-slate-400"
-          />
-          <Button
-            type="submit"
-            disabled={!inputValue.trim() || isLoading || !isConnected}
-            className="shrink-0"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
+              </ScrollArea>
             )}
-          </Button>
-        </form>
+          </div>
+        )}
       </div>
     </div>
   );
