@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Session, SessionDocument } from './session.schema';
+import { Session, SessionDocument, VideoChunk, VideoStatus } from './session.schema';
 import {
   SessionEvent,
   SessionEventDocument,
@@ -389,6 +389,163 @@ export class SessionService {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  // ============================================================================
+  // Video Recording Methods
+  // ============================================================================
+
+  /**
+   * Start video recording for a session
+   */
+  async startVideoRecording(sessionId: string): Promise<SessionDocument | null> {
+    const updated = await this.sessionModel
+      .findOneAndUpdate(
+        { sessionId },
+        {
+          videoStatus: 'recording' as VideoStatus,
+          videoStartedAt: new Date(),
+          videoChunks: [],
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (updated) {
+      this.logger.log(`Video recording started for session: ${sessionId}`);
+    }
+    return updated;
+  }
+
+  /**
+   * Add a video chunk to a session
+   */
+  async addVideoChunk(
+    sessionId: string,
+    chunk: { index: number; s3Key: string; size?: number },
+  ): Promise<SessionDocument | null> {
+    const videoChunk: VideoChunk = {
+      index: chunk.index,
+      s3Key: chunk.s3Key,
+      uploadedAt: new Date(),
+      size: chunk.size,
+    };
+
+    const updated = await this.sessionModel
+      .findOneAndUpdate(
+        { sessionId },
+        {
+          $push: { videoChunks: videoChunk },
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (updated) {
+      this.logger.log(
+        `Video chunk ${chunk.index} added for session: ${sessionId}`,
+      );
+    }
+    return updated;
+  }
+
+  /**
+   * Get the last uploaded chunk index for a session
+   */
+  async getLastChunkIndex(sessionId: string): Promise<number> {
+    const session = await this.sessionModel
+      .findOne({ sessionId })
+      .select('videoChunks')
+      .exec();
+
+    if (!session || !session.videoChunks || session.videoChunks.length === 0) {
+      return -1;
+    }
+
+    // Find the maximum chunk index
+    return Math.max(...session.videoChunks.map((c) => c.index));
+  }
+
+  /**
+   * Complete video recording for a session
+   */
+  async completeVideoRecording(
+    sessionId: string,
+  ): Promise<SessionDocument | null> {
+    const updated = await this.sessionModel
+      .findOneAndUpdate(
+        { sessionId },
+        {
+          videoStatus: 'completed' as VideoStatus,
+          videoEndedAt: new Date(),
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (updated) {
+      this.logger.log(`Video recording completed for session: ${sessionId}`);
+    }
+    return updated;
+  }
+
+  /**
+   * Mark video recording as failed
+   */
+  async failVideoRecording(sessionId: string): Promise<SessionDocument | null> {
+    const updated = await this.sessionModel
+      .findOneAndUpdate(
+        { sessionId },
+        {
+          videoStatus: 'failed' as VideoStatus,
+          videoEndedAt: new Date(),
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (updated) {
+      this.logger.warn(`Video recording failed for session: ${sessionId}`);
+    }
+    return updated;
+  }
+
+  /**
+   * Get video chunks for a session
+   */
+  async getVideoChunks(sessionId: string): Promise<VideoChunk[]> {
+    const session = await this.sessionModel
+      .findOne({ sessionId })
+      .select('videoChunks')
+      .exec();
+
+    if (!session || !session.videoChunks) {
+      return [];
+    }
+
+    // Sort by index
+    return [...session.videoChunks].sort((a, b) => a.index - b.index);
+  }
+
+  /**
+   * Get video status for a session
+   */
+  async getVideoStatus(
+    sessionId: string,
+  ): Promise<{ status: VideoStatus; chunkCount: number } | null> {
+    const session = await this.sessionModel
+      .findOne({ sessionId })
+      .select('videoStatus videoChunks')
+      .exec();
+
+    if (!session) {
+      return null;
+    }
+
+    return {
+      status: session.videoStatus || 'idle',
+      chunkCount: session.videoChunks?.length || 0,
     };
   }
 }

@@ -13,7 +13,13 @@ import {
   FaceVerifyResult,
   FaceVerifyFailed,
   SessionInfo,
+  VideoUrlEvent,
+  VideoUrlErrorEvent,
 } from '@/lib/socket';
+import {
+  videoRecorderService,
+  VideoRecorderStatus,
+} from '@/lib/video-recorder';
 import {
   faceTrackingService,
   FaceTrackingData,
@@ -44,10 +50,10 @@ import {
   Eye,
   EyeOff,
   Activity,
-  ChevronDown,
-  ChevronUp,
   ChevronRight,
   LogOut,
+  Video,
+  VideoOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -76,13 +82,20 @@ export default function ChatPage() {
     null
   );
   const [isInitializing, setIsInitializing] = useState(true);
-  const [trackingData, setTrackingData] = useState<FaceTrackingData | null>(null);
-  const [extendedMetrics, setExtendedMetrics] = useState<ExtendedTrackingMetrics | null>(null);
+  const [trackingData, setTrackingData] = useState<FaceTrackingData | null>(
+    null
+  );
+  const [extendedMetrics, setExtendedMetrics] =
+    useState<ExtendedTrackingMetrics | null>(null);
   const [isTrackingEnabled, setIsTrackingEnabled] = useState(true);
   const [isTrackingReady, setIsTrackingReady] = useState(false);
   const [showTrackingDebug, setShowTrackingDebug] = useState(true);
-  const [showEventLog, setShowEventLog] = useState(true);
+  const [showEventLog, setShowEventLog] = useState(false);
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
+  const [videoRecordingStatus, setVideoRecordingStatus] =
+    useState<VideoRecorderStatus>('idle');
+  const [videoChunkCount, setVideoChunkCount] = useState(0);
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventLogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -93,7 +106,8 @@ export default function ChatPage() {
   const trackingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitializedRef = useRef(false); // Track if we've already initialized
   const isCleaningUpRef = useRef(false); // Track if cleanup is intentional
-  
+  const hasCheckedEntryRef = useRef(false); // Track if we've checked entry conditions
+
   // Refs for tracking significant state changes
   const prevTrackingDataRef = useRef<FaceTrackingData | null>(null);
   const wasFaceAwayRef = useRef(false);
@@ -110,14 +124,16 @@ export default function ChatPage() {
   const wasMultipleFacesRef = useRef(false);
   const wasTabHiddenRef = useRef(false);
   const wasWindowBlurredRef = useRef(false);
-  
+
   // Ref to hold addTrackingEvent for use in useEffect callbacks
-  const addTrackingEventRef = useRef<(
-    type: FaceTrackingEventType,
-    message: string,
-    severity?: TrackingEventSeverity,
-    details?: string
-  ) => void>(() => {});
+  const addTrackingEventRef = useRef<
+    (
+      type: FaceTrackingEventType,
+      message: string,
+      severity?: TrackingEventSeverity,
+      details?: string
+    ) => void
+  >(() => {});
 
   // Capture face from video stream
   const captureFace = useCallback((): string | null => {
@@ -155,16 +171,33 @@ export default function ChatPage() {
 
       // Log current tracking status during verification
       if (videoRef.current && faceTrackingService.isReady()) {
-        const currentTrackingData = faceTrackingService.processFrame(videoRef.current);
+        const currentTrackingData = faceTrackingService.processFrame(
+          videoRef.current
+        );
         if (currentTrackingData) {
-          const isFaceAway = !currentTrackingData.faceDetected || Math.abs(currentTrackingData.headPose.yaw) > 40;
-          const isLookingAway = currentTrackingData.eyes.gazeDirection !== 'CENTER';
+          const isFaceAway =
+            !currentTrackingData.faceDetected ||
+            Math.abs(currentTrackingData.headPose.yaw) > 40;
+          const isLookingAway =
+            currentTrackingData.eyes.gazeDirection !== 'CENTER';
           const isTalking = currentTrackingData.expression.mouthOpen > 30;
-          
+
           console.log('=== PERIODIC CHECK ===');
           console.log(`Face: ${isFaceAway ? '⚠️ AWAY' : '✓ Facing screen'}`);
-          console.log(`Gaze: ${isLookingAway ? `⚠️ Looking ${currentTrackingData.eyes.gazeDirection}` : '✓ Looking at screen'}`);
-          console.log(`Talking: ${isTalking ? `⚠️ Mouth open (${currentTrackingData.expression.mouthOpen}%)` : '✓ Silent'}`);
+          console.log(
+            `Gaze: ${
+              isLookingAway
+                ? `⚠️ Looking ${currentTrackingData.eyes.gazeDirection}`
+                : '✓ Looking at screen'
+            }`
+          );
+          console.log(
+            `Talking: ${
+              isTalking
+                ? `⚠️ Mouth open (${currentTrackingData.expression.mouthOpen}%)`
+                : '✓ Silent'
+            }`
+          );
           console.log('======================');
         }
       }
@@ -185,8 +218,13 @@ export default function ChatPage() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
+
+      // Mark camera as ready for video recording
+      setIsCameraReady(true);
+      console.log('[ChatPage] Camera started and ready');
     } catch (error) {
       console.error('Failed to start camera for verification:', error);
+      setIsCameraReady(false);
     }
   }, []);
 
@@ -201,44 +239,52 @@ export default function ChatPage() {
   // End session - cleanup and redirect to session page
   const endSession = useCallback(() => {
     console.log('[ChatPage] Ending session...');
-    
+
     // Mark as intentional cleanup
     isCleaningUpRef.current = true;
-    
+
+    // Stop video recording
+    if (videoRecorderService.getStatus() === 'recording') {
+      console.log('[ChatPage] Stopping video recording...');
+      videoRecorderService.stop();
+      socketService.sendVideoStop();
+    }
+    videoRecorderService.destroy();
+
     // Clear verification interval
     if (verificationIntervalRef.current) {
       clearInterval(verificationIntervalRef.current);
       verificationIntervalRef.current = null;
     }
-    
+
     // Clear face tracking interval
     if (trackingIntervalRef.current) {
       clearInterval(trackingIntervalRef.current);
       trackingIntervalRef.current = null;
     }
-    
+
     // Stop camera
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
-    
+
     // Destroy face tracking service
     faceTrackingService.destroy();
-    
+
     // Cleanup client events service
     clientEventsService.cleanup();
-    
+
     // Flush and cleanup keystroke logger
     keystrokeLogger.forceFlush();
     keystrokeLogger.cleanup();
-    
+
     // Disconnect socket
     socketService.disconnect();
-    
+
     // Clear session storage
     sessionStorage.removeItem('referenceFace');
-    
+
     // Redirect to session page
     if (sessionId) {
       router.push(`/sessions/${sessionId}`);
@@ -272,7 +318,7 @@ export default function ChatPage() {
     },
     []
   );
-  
+
   // Update ref whenever addTrackingEvent changes
   useEffect(() => {
     addTrackingEventRef.current = addTrackingEvent;
@@ -288,9 +334,11 @@ export default function ChatPage() {
       extendedData?: ExtendedTrackingMetrics
     ) => {
       console.log('[ChatPage] Attempting to send tracking event:', type);
-      
+
       if (!socketService.isConnected()) {
-        console.warn('[ChatPage] Socket not connected, cannot send tracking event');
+        console.warn(
+          '[ChatPage] Socket not connected, cannot send tracking event'
+        );
         return;
       }
 
@@ -309,10 +357,13 @@ export default function ChatPage() {
             left: data.eyes.leftEyeOpenness,
             right: data.eyes.rightEyeOpenness,
           },
-          squintLevel: data.eyes.leftSquint !== undefined ? {
-            left: data.eyes.leftSquint,
-            right: data.eyes.rightSquint || 0,
-          } : undefined,
+          squintLevel:
+            data.eyes.leftSquint !== undefined
+              ? {
+                  left: data.eyes.leftSquint,
+                  right: data.eyes.rightSquint || 0,
+                }
+              : undefined,
           blinkRate: extendedData?.blinkRate,
           eyeClosureDuration: extendedData?.eyeClosureDuration,
           headMovementCount: extendedData?.headMovementCount,
@@ -344,85 +395,207 @@ export default function ChatPage() {
     // === FACE DETECTION ===
     const isFaceNotDetected = !data.faceDetected;
     if (isFaceNotDetected && !wasFaceNotDetectedRef.current) {
-      addTrackingEvent('face_not_detected', 'Face Not Detected', 'warning', 'No face visible in frame');
-      sendTrackingEventToBackend('face_not_detected', 'Face Not Detected', 'No face visible in frame', data, metrics);
+      addTrackingEvent(
+        'face_not_detected',
+        'Face Not Detected',
+        'warning',
+        'No face visible in frame'
+      );
+      sendTrackingEventToBackend(
+        'face_not_detected',
+        'Face Not Detected',
+        'No face visible in frame',
+        data,
+        metrics
+      );
       console.log('[ALERT] Face not detected');
     } else if (!isFaceNotDetected && wasFaceNotDetectedRef.current) {
-      addTrackingEvent('face_detected', 'Face Detected', 'success', 'Face is now visible');
-      sendTrackingEventToBackend('face_detected', 'Face Detected', 'Face is now visible', data, metrics);
+      addTrackingEvent(
+        'face_detected',
+        'Face Detected',
+        'success',
+        'Face is now visible'
+      );
+      sendTrackingEventToBackend(
+        'face_detected',
+        'Face Detected',
+        'Face is now visible',
+        data,
+        metrics
+      );
       console.log('[OK] Face detected');
     }
     wasFaceNotDetectedRef.current = isFaceNotDetected;
 
     // === FACE TURNED AWAY (head pose) ===
     if (data.faceDetected) {
-      const isFaceAway = Math.abs(data.headPose.yaw) > 40 || Math.abs(data.headPose.pitch) > 35;
-      
+      const isFaceAway =
+        Math.abs(data.headPose.yaw) > 40 || Math.abs(data.headPose.pitch) > 35;
+
       if (isFaceAway && !wasFaceAwayRef.current) {
         const details = `Head angle: yaw=${data.headPose.yaw}° pitch=${data.headPose.pitch}°`;
         addTrackingEvent('face_away', 'Face Turned Away', 'warning', details);
-        sendTrackingEventToBackend('face_away', 'Face Turned Away', details, data, metrics);
+        sendTrackingEventToBackend(
+          'face_away',
+          'Face Turned Away',
+          details,
+          data,
+          metrics
+        );
         console.log('[ALERT] Face turned away from screen');
       } else if (!isFaceAway && wasFaceAwayRef.current) {
-        addTrackingEvent('face_returned', 'Face Returned to Screen', 'success', 'User is facing the screen again');
-        sendTrackingEventToBackend('face_returned', 'Face Returned to Screen', 'User is facing the screen again', data, metrics);
+        addTrackingEvent(
+          'face_returned',
+          'Face Returned to Screen',
+          'success',
+          'User is facing the screen again'
+        );
+        sendTrackingEventToBackend(
+          'face_returned',
+          'Face Returned to Screen',
+          'User is facing the screen again',
+          data,
+          metrics
+        );
         console.log('[OK] Face returned to screen');
       }
       wasFaceAwayRef.current = isFaceAway;
 
       // === GAZE DIRECTION ===
       const isLookingAway = data.eyes.gazeDirection !== 'CENTER';
-      
+
       if (isLookingAway && !wasLookingAwayRef.current) {
         const details = `User's gaze direction: ${data.eyes.gazeDirection}`;
-        addTrackingEvent('looking_away', `Eyes Looking ${data.eyes.gazeDirection}`, 'warning', details);
-        sendTrackingEventToBackend('looking_away', `Eyes Looking ${data.eyes.gazeDirection}`, details, data, metrics);
+        addTrackingEvent(
+          'looking_away',
+          `Eyes Looking ${data.eyes.gazeDirection}`,
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'looking_away',
+          `Eyes Looking ${data.eyes.gazeDirection}`,
+          details,
+          data,
+          metrics
+        );
         console.log(`[ALERT] User looking ${data.eyes.gazeDirection}`);
       } else if (!isLookingAway && wasLookingAwayRef.current) {
-        addTrackingEvent('looking_back', 'Eyes Returned to Screen', 'success', 'User is looking at the screen');
-        sendTrackingEventToBackend('looking_back', 'Eyes Returned to Screen', 'User is looking at the screen', data, metrics);
+        addTrackingEvent(
+          'looking_back',
+          'Eyes Returned to Screen',
+          'success',
+          'User is looking at the screen'
+        );
+        sendTrackingEventToBackend(
+          'looking_back',
+          'Eyes Returned to Screen',
+          'User is looking at the screen',
+          data,
+          metrics
+        );
         console.log('[OK] User looking at screen');
       }
       wasLookingAwayRef.current = isLookingAway;
 
       // === TALKING DETECTION ===
       const isTalking = data.expression.mouthOpen > 30;
-      
+
       if (isTalking && !wasTalkingRef.current) {
         const details = `Mouth openness: ${data.expression.mouthOpen}%`;
         addTrackingEvent('talking', 'Speaking Detected', 'warning', details);
-        sendTrackingEventToBackend('talking', 'Speaking Detected', details, data, metrics);
-        console.log(`[ALERT] User may be talking (mouth ${data.expression.mouthOpen}% open)`);
+        sendTrackingEventToBackend(
+          'talking',
+          'Speaking Detected',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] User may be talking (mouth ${data.expression.mouthOpen}% open)`
+        );
       } else if (!isTalking && wasTalkingRef.current) {
-        addTrackingEvent('stopped_talking', 'Speaking Stopped', 'info', 'Mouth closed');
-        sendTrackingEventToBackend('stopped_talking', 'Speaking Stopped', 'Mouth closed', data, metrics);
+        addTrackingEvent(
+          'stopped_talking',
+          'Speaking Stopped',
+          'info',
+          'Mouth closed'
+        );
+        sendTrackingEventToBackend(
+          'stopped_talking',
+          'Speaking Stopped',
+          'Mouth closed',
+          data,
+          metrics
+        );
         console.log('[OK] User stopped talking');
       }
       wasTalkingRef.current = isTalking;
 
       // === EYES CLOSED EXTENDED ===
       const isEyesClosedExtended = faceTrackingService.isEyesClosedExtended();
-      
+
       if (isEyesClosedExtended && !wasEyesClosedExtendedRef.current) {
-        const details = `Eyes closed for ${metrics.eyeClosureDuration.toFixed(1)} seconds`;
-        addTrackingEvent('eyes_closed_extended', 'Eyes Closed Extended', 'warning', details);
-        sendTrackingEventToBackend('eyes_closed_extended', 'Eyes Closed Extended', details, data, metrics);
-        console.log(`[ALERT] Eyes closed for extended period (${metrics.eyeClosureDuration.toFixed(1)}s)`);
+        const details = `Eyes closed for ${metrics.eyeClosureDuration.toFixed(
+          1
+        )} seconds`;
+        addTrackingEvent(
+          'eyes_closed_extended',
+          'Eyes Closed Extended',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'eyes_closed_extended',
+          'Eyes Closed Extended',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] Eyes closed for extended period (${metrics.eyeClosureDuration.toFixed(
+            1
+          )}s)`
+        );
       } else if (!isEyesClosedExtended && wasEyesClosedExtendedRef.current) {
-        addTrackingEvent('eyes_opened', 'Eyes Opened', 'success', 'User opened their eyes');
-        sendTrackingEventToBackend('eyes_opened', 'Eyes Opened', 'User opened their eyes', data, metrics);
+        addTrackingEvent(
+          'eyes_opened',
+          'Eyes Opened',
+          'success',
+          'User opened their eyes'
+        );
+        sendTrackingEventToBackend(
+          'eyes_opened',
+          'Eyes Opened',
+          'User opened their eyes',
+          data,
+          metrics
+        );
         console.log('[OK] Eyes opened');
       }
       wasEyesClosedExtendedRef.current = isEyesClosedExtended;
 
       // === EXCESSIVE BLINKING ===
       const isExcessiveBlinking = faceTrackingService.isExcessiveBlinking();
-      
+
       if (isExcessiveBlinking && !wasExcessiveBlinkingRef.current) {
         const details = `Blink rate: ${metrics.blinkRate} blinks/minute`;
-        addTrackingEvent('excessive_blinking', 'Excessive Blinking Detected', 'warning', details);
-        sendTrackingEventToBackend('excessive_blinking', 'Excessive Blinking Detected', details, data, metrics);
-        console.log(`[ALERT] Excessive blinking (${metrics.blinkRate} blinks/min)`);
+        addTrackingEvent(
+          'excessive_blinking',
+          'Excessive Blinking Detected',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'excessive_blinking',
+          'Excessive Blinking Detected',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] Excessive blinking (${metrics.blinkRate} blinks/min)`
+        );
       } else if (!isExcessiveBlinking && wasExcessiveBlinkingRef.current) {
         // Blinking returned to normal - don't need to log recovery
         console.log('[OK] Blink rate returned to normal');
@@ -431,12 +604,25 @@ export default function ChatPage() {
 
       // === SQUINTING ===
       const isSquinting = metrics.isSquinting;
-      
+
       if (isSquinting && !wasSquintingRef.current) {
         const details = `Squint level: L=${metrics.squintLevel.left}% R=${metrics.squintLevel.right}%`;
-        addTrackingEvent('squinting_detected', 'Squinting Detected', 'warning', details);
-        sendTrackingEventToBackend('squinting_detected', 'Squinting Detected', details, data, metrics);
-        console.log(`[ALERT] User squinting (L=${metrics.squintLevel.left}% R=${metrics.squintLevel.right}%)`);
+        addTrackingEvent(
+          'squinting_detected',
+          'Squinting Detected',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'squinting_detected',
+          'Squinting Detected',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] User squinting (L=${metrics.squintLevel.left}% R=${metrics.squintLevel.right}%)`
+        );
       } else if (!isSquinting && wasSquintingRef.current) {
         // Squinting stopped - don't need to log recovery
         console.log('[OK] User stopped squinting');
@@ -445,28 +631,61 @@ export default function ChatPage() {
 
       // === HEAD TILTED ===
       const isHeadTilted = metrics.isHeadTilted;
-      
+
       if (isHeadTilted && !wasHeadTiltedRef.current) {
         const details = `Head roll: ${data.headPose.roll}°`;
         addTrackingEvent('head_tilted', 'Head Tilted', 'warning', details);
-        sendTrackingEventToBackend('head_tilted', 'Head Tilted', details, data, metrics);
+        sendTrackingEventToBackend(
+          'head_tilted',
+          'Head Tilted',
+          details,
+          data,
+          metrics
+        );
         console.log(`[ALERT] Head tilted (roll=${data.headPose.roll}°)`);
       } else if (!isHeadTilted && wasHeadTiltedRef.current) {
-        addTrackingEvent('head_position_normal', 'Head Position Normal', 'success', 'Head returned to normal position');
-        sendTrackingEventToBackend('head_position_normal', 'Head Position Normal', 'Head returned to normal position', data, metrics);
+        addTrackingEvent(
+          'head_position_normal',
+          'Head Position Normal',
+          'success',
+          'Head returned to normal position'
+        );
+        sendTrackingEventToBackend(
+          'head_position_normal',
+          'Head Position Normal',
+          'Head returned to normal position',
+          data,
+          metrics
+        );
         console.log('[OK] Head position normal');
       }
       wasHeadTiltedRef.current = isHeadTilted;
 
       // === EXCESSIVE HEAD MOVEMENT ===
       const isExcessiveHeadMovement = metrics.isExcessiveHeadMovement;
-      
+
       if (isExcessiveHeadMovement && !wasExcessiveHeadMovementRef.current) {
         const details = `${metrics.headMovementCount} head movements in 10 seconds`;
-        addTrackingEvent('head_movement_excessive', 'Excessive Head Movement', 'warning', details);
-        sendTrackingEventToBackend('head_movement_excessive', 'Excessive Head Movement', details, data, metrics);
-        console.log(`[ALERT] Excessive head movement (${metrics.headMovementCount} movements)`);
-      } else if (!isExcessiveHeadMovement && wasExcessiveHeadMovementRef.current) {
+        addTrackingEvent(
+          'head_movement_excessive',
+          'Excessive Head Movement',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'head_movement_excessive',
+          'Excessive Head Movement',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] Excessive head movement (${metrics.headMovementCount} movements)`
+        );
+      } else if (
+        !isExcessiveHeadMovement &&
+        wasExcessiveHeadMovementRef.current
+      ) {
         // Head movement calmed down - don't need to log
         console.log('[OK] Head movement calmed down');
       }
@@ -474,11 +693,22 @@ export default function ChatPage() {
 
       // === CONFUSED EXPRESSION ===
       const isConfused = metrics.isConfused;
-      
+
       if (isConfused && !wasConfusedRef.current) {
         const details = `Confused expression detected (browInnerUp + browDown)`;
-        addTrackingEvent('expression_confused', 'Confused Expression', 'warning', details);
-        sendTrackingEventToBackend('expression_confused', 'Confused Expression', details, data, metrics);
+        addTrackingEvent(
+          'expression_confused',
+          'Confused Expression',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'expression_confused',
+          'Confused Expression',
+          details,
+          data,
+          metrics
+        );
         console.log('[ALERT] User appears confused');
       } else if (!isConfused && wasConfusedRef.current) {
         // Confusion cleared - don't need to log
@@ -488,12 +718,25 @@ export default function ChatPage() {
 
       // === LIP READING DETECTION ===
       const isLipReading = metrics.isLipReading;
-      
+
       if (isLipReading && !wasLipReadingRef.current) {
         const details = `Lip movement: ${metrics.lipMovement}% (jaw open: ${data.expression.mouthOpen}%)`;
-        addTrackingEvent('lip_reading_detected', 'Lip Reading Detected', 'warning', details);
-        sendTrackingEventToBackend('lip_reading_detected', 'Lip Reading Detected', details, data, metrics);
-        console.log(`[ALERT] Possible lip reading (lip movement without jaw opening)`);
+        addTrackingEvent(
+          'lip_reading_detected',
+          'Lip Reading Detected',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'lip_reading_detected',
+          'Lip Reading Detected',
+          details,
+          data,
+          metrics
+        );
+        console.log(
+          `[ALERT] Possible lip reading (lip movement without jaw opening)`
+        );
       } else if (!isLipReading && wasLipReadingRef.current) {
         // Lip reading stopped - don't need to log
         console.log('[OK] Lip reading stopped');
@@ -502,11 +745,22 @@ export default function ChatPage() {
 
       // === MULTIPLE FACES ===
       const hasMultipleFaces = (data.faceCount || 1) > 1;
-      
+
       if (hasMultipleFaces && !wasMultipleFacesRef.current) {
         const details = `${data.faceCount} faces detected in frame`;
-        addTrackingEvent('multiple_faces_detected', 'Multiple Faces Detected', 'warning', details);
-        sendTrackingEventToBackend('multiple_faces_detected', 'Multiple Faces Detected', details, data, metrics);
+        addTrackingEvent(
+          'multiple_faces_detected',
+          'Multiple Faces Detected',
+          'warning',
+          details
+        );
+        sendTrackingEventToBackend(
+          'multiple_faces_detected',
+          'Multiple Faces Detected',
+          details,
+          data,
+          metrics
+        );
         console.log(`[ALERT] Multiple faces detected (${data.faceCount})`);
       } else if (!hasMultipleFaces && wasMultipleFacesRef.current) {
         // Back to single face - don't need to log
@@ -525,12 +779,17 @@ export default function ChatPage() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       const isHidden = document.visibilityState === 'hidden';
-      
+
       if (isHidden && !wasTabHiddenRef.current) {
         // Tab switched away
         const timestamp = new Date().toISOString();
-        addTrackingEvent('tab_switched_away', 'Tab Switched Away', 'warning', `User switched to another tab at ${timestamp}`);
-        
+        addTrackingEvent(
+          'tab_switched_away',
+          'Tab Switched Away',
+          'warning',
+          `User switched to another tab at ${timestamp}`
+        );
+
         if (socketService.isConnected()) {
           const payload: FaceTrackingEventPayload = {
             type: 'tab_switched_away',
@@ -544,8 +803,13 @@ export default function ChatPage() {
         console.log('[ALERT] User switched to another tab');
       } else if (!isHidden && wasTabHiddenRef.current) {
         // Tab returned
-        addTrackingEvent('tab_returned', 'Tab Returned', 'success', 'User returned to this tab');
-        
+        addTrackingEvent(
+          'tab_returned',
+          'Tab Returned',
+          'success',
+          'User returned to this tab'
+        );
+
         if (socketService.isConnected()) {
           const payload: FaceTrackingEventPayload = {
             type: 'tab_returned',
@@ -564,8 +828,13 @@ export default function ChatPage() {
     const handleWindowBlur = () => {
       if (!wasWindowBlurredRef.current) {
         wasWindowBlurredRef.current = true;
-        addTrackingEvent('window_blur', 'Window Lost Focus', 'warning', 'Browser window lost focus');
-        
+        addTrackingEvent(
+          'window_blur',
+          'Window Lost Focus',
+          'warning',
+          'Browser window lost focus'
+        );
+
         if (socketService.isConnected()) {
           const payload: FaceTrackingEventPayload = {
             type: 'window_blur',
@@ -583,8 +852,13 @@ export default function ChatPage() {
     const handleWindowFocus = () => {
       if (wasWindowBlurredRef.current) {
         wasWindowBlurredRef.current = false;
-        addTrackingEvent('window_focus', 'Window Regained Focus', 'success', 'Browser window regained focus');
-        
+        addTrackingEvent(
+          'window_focus',
+          'Window Regained Focus',
+          'success',
+          'Browser window regained focus'
+        );
+
         if (socketService.isConnected()) {
           const payload: FaceTrackingEventPayload = {
             type: 'window_focus',
@@ -617,12 +891,25 @@ export default function ChatPage() {
 
   // Initialize on mount - runs only once
   useEffect(() => {
-    // Check if we have a reference face
-    const referenceFace = sessionStorage.getItem('referenceFace');
-    if (!referenceFace) {
-      console.log('No reference face found, redirecting to home');
-      router.push('/');
-      return;
+    // Only check entry conditions once (Strict Mode protection)
+    if (!hasCheckedEntryRef.current) {
+      hasCheckedEntryRef.current = true;
+      
+      // Check if we have a reference face or if face verification is skipped
+      const referenceFace = sessionStorage.getItem('referenceFace');
+      const skipFaceVerification = sessionStorage.getItem('skipFaceVerification');
+      
+      if (!referenceFace && !skipFaceVerification) {
+        console.log('No reference face found and face verification not skipped, redirecting to home');
+        router.push('/');
+        return;
+      }
+      
+      // Clear the skip flag after reading
+      if (skipFaceVerification) {
+        sessionStorage.removeItem('skipFaceVerification');
+        console.log('Face verification skipped by admin config');
+      }
     }
 
     // Check if socket already exists (Strict Mode remount)
@@ -634,6 +921,8 @@ export default function ChatPage() {
         setSessionId(existingSocket.id || 'connected');
         setIsInitializing(false);
       }
+      // Start camera even when reusing socket (needed for video recording)
+      startCamera();
       // Don't reinitialize, just return
       hasInitializedRef.current = true;
       return;
@@ -641,6 +930,8 @@ export default function ChatPage() {
 
     // Prevent double initialization
     if (hasInitializedRef.current) {
+      // Still start camera if not already started
+      startCamera();
       return;
     }
 
@@ -658,11 +949,18 @@ export default function ChatPage() {
       setIsConnected(true);
       setIsInitializing(false);
 
-      // Send reference face
+      // Check if face verification is enabled
+      const faceVerificationEnabled = session.faceVerification?.enabled !== false;
+      
+      // Send reference face only if face verification is enabled
       const storedFace = sessionStorage.getItem('referenceFace');
-      if (storedFace) {
+      if (storedFace && faceVerificationEnabled) {
         console.log('Sending stored reference face...');
         socketService.sendReferenceFace(storedFace);
+      } else if (!faceVerificationEnabled) {
+        console.log('Face verification disabled, skipping reference face');
+        // Mark as verified since face verification is disabled
+        setVerificationStatus('verified');
       }
     };
 
@@ -724,7 +1022,9 @@ export default function ChatPage() {
           'verification_success',
           'Face Verified',
           'success',
-          `Confidence: ${result.confidence.toFixed(1)}% (Threshold: ${threshold}%)`
+          `Confidence: ${result.confidence.toFixed(
+            1
+          )}% (Threshold: ${threshold}%)`
         );
       } else {
         setVerificationStatus('failed');
@@ -735,7 +1035,9 @@ export default function ChatPage() {
           'verification_failed',
           'Face Verification Failed',
           'warning',
-          `Confidence: ${result.confidence.toFixed(1)}% (Required: ${threshold}%)${
+          `Confidence: ${result.confidence.toFixed(
+            1
+          )}% (Required: ${threshold}%)${
             result.retriesLeft !== undefined
               ? ` - ${result.retriesLeft} retries left`
               : ''
@@ -881,6 +1183,13 @@ export default function ChatPage() {
     if (!isConnected) return;
 
     const faceConfig = socketService.getFaceConfig();
+    
+    // Skip periodic verification if face recognition is disabled
+    if (faceConfig?.enabled === false) {
+      console.log('Face verification disabled, skipping periodic checks');
+      return;
+    }
+    
     const intervalMs = faceConfig?.checkIntervalMs || 60000;
 
     console.log(`Setting up periodic verification every ${intervalMs}ms`);
@@ -911,7 +1220,7 @@ export default function ChatPage() {
       try {
         console.log('[ChatPage] Initializing face tracking service...');
         await faceTrackingService.initialize(2); // Support up to 2 faces for multiple face detection
-        
+
         if (isMounted) {
           console.log('[ChatPage] Face tracking service ready');
           setIsTrackingReady(true);
@@ -936,7 +1245,7 @@ export default function ChatPage() {
     // Subscribe to client events and add them to the tracking log
     const unsubscribe = clientEventsService.subscribe((event: ClientEvent) => {
       // Map client event severity to tracking event severity
-      const severity: TrackingEventSeverity = 
+      const severity: TrackingEventSeverity =
         event.severity === 'critical' ? 'warning' : event.severity;
 
       // Add to the tracking events log
@@ -980,14 +1289,19 @@ export default function ChatPage() {
       return;
     }
 
-    console.log('[ChatPage] Initializing keystroke logger for session:', sessionId);
+    console.log(
+      '[ChatPage] Initializing keystroke logger for session:',
+      sessionId
+    );
 
     // Initialize with callback to send batches to backend
     keystrokeLogger.initialize(sessionId, (batch: KeystrokeBatchPayload) => {
       if (socketService.isConnected()) {
         socketService.sendKeystrokeBatch(batch);
       } else {
-        console.warn('[ChatPage] Cannot send keystroke batch - socket not connected');
+        console.warn(
+          '[ChatPage] Cannot send keystroke batch - socket not connected'
+        );
       }
     });
 
@@ -997,15 +1311,98 @@ export default function ChatPage() {
     };
   }, [sessionId]);
 
+  // Initialize video recording when session is established and camera is ready
+  useEffect(() => {
+    if (!sessionId || !isConnected || !isCameraReady || !streamRef.current) {
+      console.log('[ChatPage] Video recording not starting - sessionId:', sessionId, 'connected:', isConnected, 'cameraReady:', isCameraReady);
+      return;
+    }
+
+    console.log(
+      '[ChatPage] Initializing video recording for session:',
+      sessionId
+    );
+
+    // Initialize video recorder with callbacks
+    videoRecorderService.initialize({
+      onRequestUrl: (chunkIndex: number) => {
+        if (socketService.isConnected()) {
+          socketService.sendVideoUrlRequest(chunkIndex);
+        } else {
+          console.warn(`[ChatPage] Cannot request URL for chunk ${chunkIndex} - socket not connected`);
+        }
+      },
+      onChunkUploaded: (chunkIndex: number, s3Key: string, size: number) => {
+        if (socketService.isConnected()) {
+          socketService.sendVideoChunkUploaded(chunkIndex, s3Key, size);
+          setVideoChunkCount((prev) => prev + 1);
+        } else {
+          console.warn(`[ChatPage] Cannot confirm chunk ${chunkIndex} - socket not connected`);
+        }
+      },
+      onError: (chunkIndex: number, error: string) => {
+        if (socketService.isConnected()) {
+          socketService.sendVideoError(chunkIndex, error);
+        }
+        console.error(`[ChatPage] Video chunk ${chunkIndex} error:`, error);
+      },
+      onStatusChange: (status: VideoRecorderStatus) => {
+        setVideoRecordingStatus(status);
+        console.log('[ChatPage] Video recording status:', status);
+      },
+    });
+
+    // Set up socket event handlers for video
+    const handleVideoUrl = (event: VideoUrlEvent) => {
+      videoRecorderService.handleUrlResponse(
+        event.chunkIndex,
+        event.url,
+        event.s3Key,
+        event.expiresIn
+      );
+    };
+
+    const handleVideoUrlError = (event: VideoUrlErrorEvent) => {
+      videoRecorderService.handleUrlError(event.chunkIndex, event.error);
+    };
+
+    socketService.onVideoUrl(handleVideoUrl);
+    socketService.onVideoUrlError(handleVideoUrlError);
+
+    // Start video recording
+    socketService.sendVideoStart();
+    videoRecorderService.start(streamRef.current).then((started) => {
+      if (started) {
+        console.log('[ChatPage] Video recording started successfully');
+      } else {
+        console.error('[ChatPage] Failed to start video recording');
+      }
+    });
+
+    return () => {
+      console.log('[ChatPage] Cleaning up video recorder...');
+      socketService.offVideoUrl(handleVideoUrl);
+      socketService.offVideoUrlError(handleVideoUrlError);
+      // Don't destroy here - endSession handles that
+    };
+  }, [sessionId, isConnected, isCameraReady]);
+
   // Set up face tracking interval (separate from verification)
   useEffect(() => {
     if (!isTrackingEnabled || !isTrackingReady) {
-      console.log('[ChatPage] Face tracking not starting - enabled:', isTrackingEnabled, 'ready:', isTrackingReady);
+      console.log(
+        '[ChatPage] Face tracking not starting - enabled:',
+        isTrackingEnabled,
+        'ready:',
+        isTrackingReady
+      );
       return;
     }
 
     const trackingIntervalMs = 500; // Process every 500ms
-    console.log(`[ChatPage] Starting face tracking every ${trackingIntervalMs}ms`);
+    console.log(
+      `[ChatPage] Starting face tracking every ${trackingIntervalMs}ms`
+    );
 
     // Run immediately once
     processFaceTracking();
@@ -1109,7 +1506,11 @@ export default function ChatPage() {
               size="sm"
               onClick={() => setShowTrackingDebug(!showTrackingDebug)}
               className="h-8 px-2"
-              title={showTrackingDebug ? 'Hide tracking debug' : 'Show tracking debug'}
+              title={
+                showTrackingDebug
+                  ? 'Hide tracking debug'
+                  : 'Show tracking debug'
+              }
             >
               {showTrackingDebug ? (
                 <Eye className="h-4 w-4 text-blue-500" />
@@ -1130,6 +1531,39 @@ export default function ChatPage() {
                 {verificationStatus === 'failed' && 'Failed'}
                 {verificationStatus === 'pending' && 'Pending'}
               </span>
+            </div>
+
+            {/* Video recording status */}
+            <div
+              className="flex items-center gap-1.5"
+              title={`Video recording: ${videoRecordingStatus} (${videoChunkCount} chunks)`}
+            >
+              {videoRecordingStatus === 'recording' ? (
+                <>
+                  <div className="relative">
+                    <Video className="h-4 w-4 text-red-500" />
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                  </div>
+                  <span className="text-xs font-medium text-red-500">REC</span>
+                </>
+              ) : videoRecordingStatus === 'stopped' ||
+                videoRecordingStatus === 'stopping' ? (
+                <>
+                  <VideoOff className="h-4 w-4 text-slate-400" />
+                  <span className="text-xs font-medium text-slate-400">
+                    Stopped
+                  </span>
+                </>
+              ) : videoRecordingStatus === 'error' ? (
+                <>
+                  <VideoOff className="h-4 w-4 text-red-400" />
+                  <span className="text-xs font-medium text-red-400">
+                    Error
+                  </span>
+                </>
+              ) : (
+                <Video className="h-4 w-4 text-slate-300" />
+              )}
             </div>
 
             {/* Connection status */}
@@ -1193,7 +1627,9 @@ export default function ChatPage() {
                       key={message.id}
                       className={cn(
                         'flex gap-3',
-                        message.role === 'user' ? 'justify-end' : 'justify-start'
+                        message.role === 'user'
+                          ? 'justify-end'
+                          : 'justify-start'
                       )}
                     >
                       {message.role === 'assistant' && (
@@ -1229,7 +1665,9 @@ export default function ChatPage() {
                       </div>
                       <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-2.5 shadow-sm border border-slate-200">
                         <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                        <span className="text-sm text-slate-500">Thinking...</span>
+                        <span className="text-sm text-slate-500">
+                          Thinking...
+                        </span>
                       </div>
                     </div>
                   )}
@@ -1250,7 +1688,9 @@ export default function ChatPage() {
                 ref={inputRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder={isConnected ? 'Type your message...' : 'Connecting...'}
+                placeholder={
+                  isConnected ? 'Type your message...' : 'Connecting...'
+                }
                 disabled={isLoading || !isConnected}
                 className="flex-1 border-slate-300 bg-slate-50 focus-visible:ring-slate-400"
               />
@@ -1271,10 +1711,12 @@ export default function ChatPage() {
 
         {/* Event Log Sidebar - Right Side */}
         {showTrackingDebug && (
-          <div className={cn(
-            'flex flex-col border-l border-slate-200 bg-white transition-all duration-300',
-            showEventLog ? 'w-80' : 'w-12'
-          )}>
+          <div
+            className={cn(
+              'flex flex-col border-l border-slate-200 bg-white transition-all duration-300',
+              showEventLog ? 'w-80' : 'w-12'
+            )}
+          >
             {/* Sidebar Header */}
             <button
               onClick={() => setShowEventLog(!showEventLog)}
@@ -1284,7 +1726,9 @@ export default function ChatPage() {
               {showEventLog ? (
                 <>
                   <Activity className="h-4 w-4 text-slate-600" />
-                  <span className="flex-1 text-sm font-medium text-slate-700 text-left">Tracking</span>
+                  <span className="flex-1 text-sm font-medium text-slate-700 text-left">
+                    Tracking
+                  </span>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
                     {trackingEvents.length}
                   </span>
@@ -1293,7 +1737,9 @@ export default function ChatPage() {
               ) : (
                 <div className="flex flex-col items-center gap-1">
                   <Activity className="h-4 w-4 text-slate-600" />
-                  <span className="text-[10px] text-slate-500">{trackingEvents.length}</span>
+                  <span className="text-[10px] text-slate-500">
+                    {trackingEvents.length}
+                  </span>
                 </div>
               )}
             </button>
@@ -1306,7 +1752,8 @@ export default function ChatPage() {
                   <div
                     className={cn(
                       'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]',
-                      !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                      !trackingData.faceDetected ||
+                        Math.abs(trackingData.headPose.yaw) > 40
                         ? 'bg-red-100 text-red-700'
                         : 'bg-emerald-100 text-emerald-700'
                     )}
@@ -1314,7 +1761,8 @@ export default function ChatPage() {
                     <span
                       className={cn(
                         'inline-flex h-1.5 w-1.5 rounded-full',
-                        !trackingData.faceDetected || Math.abs(trackingData.headPose.yaw) > 40
+                        !trackingData.faceDetected ||
+                          Math.abs(trackingData.headPose.yaw) > 40
                           ? 'bg-red-500'
                           : 'bg-emerald-500'
                       )}
@@ -1323,8 +1771,8 @@ export default function ChatPage() {
                       {!trackingData.faceDetected
                         ? 'No Face'
                         : Math.abs(trackingData.headPose.yaw) > 40
-                          ? 'Away'
-                          : 'Facing'}
+                        ? 'Away'
+                        : 'Facing'}
                     </span>
                   </div>
 
@@ -1358,7 +1806,9 @@ export default function ChatPage() {
                       )}
                     >
                       <span className="font-medium">
-                        {trackingData.expression.mouthOpen > 30 ? 'Talking' : 'Silent'}
+                        {trackingData.expression.mouthOpen > 30
+                          ? 'Talking'
+                          : 'Silent'}
                       </span>
                     </div>
                   )}
@@ -1366,7 +1816,9 @@ export default function ChatPage() {
                   {/* Multiple Faces Warning */}
                   {trackingData.faceCount && trackingData.faceCount > 1 && (
                     <div className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] text-red-700">
-                      <span className="font-medium">{trackingData.faceCount} Faces</span>
+                      <span className="font-medium">
+                        {trackingData.faceCount} Faces
+                      </span>
                     </div>
                   )}
 
@@ -1375,7 +1827,9 @@ export default function ChatPage() {
                     <>
                       {extendedMetrics.blinkRate > 15 && (
                         <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
-                          <span className="font-medium">{extendedMetrics.blinkRate}/min</span>
+                          <span className="font-medium">
+                            {extendedMetrics.blinkRate}/min
+                          </span>
                         </div>
                       )}
                       {extendedMetrics.isHeadTilted && (
@@ -1432,9 +1886,12 @@ export default function ChatPage() {
                                 <span
                                   className={cn(
                                     'font-medium truncate',
-                                    event.severity === 'info' && 'text-slate-700',
-                                    event.severity === 'warning' && 'text-amber-700',
-                                    event.severity === 'success' && 'text-emerald-700'
+                                    event.severity === 'info' &&
+                                      'text-slate-700',
+                                    event.severity === 'warning' &&
+                                      'text-amber-700',
+                                    event.severity === 'success' &&
+                                      'text-emerald-700'
                                   )}
                                 >
                                   {event.message}

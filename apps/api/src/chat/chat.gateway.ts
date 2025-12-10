@@ -13,7 +13,16 @@ import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
 import { KeystrokeService } from '../keystroke/keystroke.service';
-import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType, KeystrokeBatchPayload } from '@sec-flags/shared';
+import { S3Service } from '../s3/s3.service';
+import { SystemConfigService } from '../config';
+import {
+  FaceTrackingEventPayload,
+  FaceTrackingEventType,
+  ClientEventPayload,
+  ClientEventType,
+  KeystrokeBatchPayload,
+} from '@sec-flags/shared';
+import { EventType, ChatEventData } from '../session/session-event.schema';
 
 interface MessagePayload {
   content: string;
@@ -25,6 +34,21 @@ interface FaceReferencePayload {
 
 interface FaceVerifyPayload {
   imageBase64: string;
+}
+
+interface VideoUrlRequestPayload {
+  chunkIndex: number;
+}
+
+interface VideoChunkUploadedPayload {
+  chunkIndex: number;
+  s3Key: string;
+  size?: number;
+}
+
+interface VideoErrorPayload {
+  chunkIndex: number;
+  error: string;
 }
 
 // Warning event types that require immediate attention
@@ -61,7 +85,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly chatService: ChatService,
     private readonly faceService: FaceService,
     private readonly sessionService: SessionService,
-    private readonly keystrokeService: KeystrokeService
+    private readonly keystrokeService: KeystrokeService,
+    private readonly s3Service: S3Service,
+    private readonly systemConfigService: SystemConfigService
   ) {}
 
   async handleConnection(client: Socket) {
@@ -79,11 +105,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(`Failed to create DB session: ${error.message}`);
     }
 
+    // Check if face recognition is enabled
+    const faceRecognitionEnabled =
+      await this.systemConfigService.isFaceRecognitionEnabled();
+    this.logger.log(`Face recognition enabled: ${faceRecognitionEnabled}`);
+
     // Send session info and face verification config to client
     const sessionData = {
       sessionId: chatSession.id,
       createdAt: chatSession.createdAt,
       faceVerification: {
+        enabled: faceRecognitionEnabled,
         checkIntervalMs: this.faceService.checkIntervalMs,
         confidenceThreshold: this.faceService.confidenceThreshold,
       },
@@ -110,12 +142,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ): Promise<void> {
     this.logger.log(`Message from ${client.id}: ${payload.content}`);
 
+    const chatSession = this.chatService.getSession(client.id);
+    this.logger.log(
+      `[Chat] Session lookup for client ${client.id}: ${
+        chatSession ? chatSession.id : 'NOT FOUND'
+      }`
+    );
+
     try {
+      // Log USER_RESPONDED event
+      if (chatSession) {
+        const userEventData: ChatEventData = {
+          message: 'User sent a message',
+          role: 'user',
+          contentPreview: payload.content.substring(0, 100),
+          contentLength: payload.content.length,
+        };
+        await this.sessionService.logEvent(
+          chatSession.id,
+          EventType.USER_RESPONDED,
+          userEventData
+        );
+        this.logger.log(
+          `[Chat] USER_RESPONDED event logged for session ${chatSession.id}`
+        );
+      } else {
+        this.logger.warn(
+          `[Chat] Cannot log USER_RESPONDED - no session found for client ${client.id}`
+        );
+      }
+
       // Process the message and get response
       const response: ChatMessage = await this.chatService.processMessage(
         client.id,
         payload.content
       );
+
+      // Log AI_RESPONDED event
+      if (chatSession) {
+        const aiEventData: ChatEventData = {
+          message: 'AI generated a response',
+          role: 'assistant',
+          contentPreview: response.content.substring(0, 100),
+          contentLength: response.content.length,
+        };
+        await this.sessionService.logEvent(
+          chatSession.id,
+          EventType.AI_RESPONDED,
+          aiEventData
+        );
+        this.logger.log(
+          `[Chat] AI_RESPONDED event logged for session ${chatSession.id}`
+        );
+      } else {
+        this.logger.warn(
+          `[Chat] Cannot log AI_RESPONDED - no session found for client ${client.id}`
+        );
+      }
 
       // Send response back to client
       client.emit('response', {
@@ -136,6 +219,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceReferencePayload
   ): Promise<void> {
+    // Check if face recognition is enabled
+    const faceRecognitionEnabled =
+      await this.systemConfigService.isFaceRecognitionEnabled();
+    if (!faceRecognitionEnabled) {
+      this.logger.log(
+        `Face recognition disabled, skipping reference storage for ${client.id}`
+      );
+      client.emit('face:reference:stored', {
+        success: true,
+        message: 'Face recognition is disabled',
+        skipped: true,
+      });
+      return;
+    }
+
     this.logger.log(`=== Face reference received from ${client.id} ===`);
     this.logger.log(`Payload length: ${payload?.imageBase64?.length || 0}`);
 
@@ -190,6 +288,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceVerifyPayload
   ): Promise<void> {
+    // Check if face recognition is enabled
+    const faceRecognitionEnabled =
+      await this.systemConfigService.isFaceRecognitionEnabled();
+    if (!faceRecognitionEnabled) {
+      this.logger.log(
+        `Face recognition disabled, skipping verification for ${client.id}`
+      );
+      client.emit('face:result', {
+        success: true,
+        confidence: 100,
+        message: 'Face recognition is disabled',
+        skipped: true,
+      });
+      return;
+    }
+
     this.logger.log(`Face verification request from ${client.id}`);
 
     try {
@@ -262,6 +376,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceTrackingEventPayload
   ): Promise<void> {
+    // Check if face recognition is enabled
+    const faceRecognitionEnabled =
+      await this.systemConfigService.isFaceRecognitionEnabled();
+    if (!faceRecognitionEnabled) {
+      return; // Silently skip tracking when face recognition is disabled
+    }
+
     const timestamp = new Date(payload.timestamp).toISOString();
     const isWarning = WARNING_EVENT_TYPES.includes(payload.type);
 
@@ -273,12 +394,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const chatSession = this.chatService.getSession(client.id);
       if (chatSession) {
         await this.sessionService.logFaceTrackingEvent(chatSession.id, payload);
-        this.logger.debug(`[FaceTracking] Event persisted to DB: ${payload.type}`);
+        this.logger.debug(
+          `[FaceTracking] Event persisted to DB: ${payload.type}`
+        );
       } else {
-        this.logger.warn(`[FaceTracking] No session found for client ${client.id}, event not persisted`);
+        this.logger.warn(
+          `[FaceTracking] No session found for client ${client.id}, event not persisted`
+        );
       }
     } catch (error) {
-      this.logger.error(`[FaceTracking] Failed to persist event: ${error.message}`);
+      this.logger.error(
+        `[FaceTracking] Failed to persist event: ${error.message}`
+      );
     }
   }
 
@@ -320,7 +447,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Eye State
       case 'eyes_closed_extended':
-        logMessage = `${icon} EYES CLOSED - Duration: ${payload.data?.eyeClosureDuration?.toFixed(1)}s`;
+        logMessage = `${icon} EYES CLOSED - Duration: ${payload.data?.eyeClosureDuration?.toFixed(
+          1
+        )}s`;
         break;
       case 'eyes_opened':
         logMessage = `${icon} Eyes opened`;
@@ -405,7 +534,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: ClientEventPayload
   ): Promise<void> {
     const timestamp = new Date(payload.timestamp).toISOString();
-    const isWarning = payload.severity === 'warning' || payload.severity === 'critical';
+    const isWarning =
+      payload.severity === 'warning' || payload.severity === 'critical';
 
     // Log to console
     this.logClientEvent(client.id, payload, isWarning, timestamp);
@@ -415,12 +545,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const chatSession = this.chatService.getSession(client.id);
       if (chatSession) {
         await this.sessionService.logClientEvent(chatSession.id, payload);
-        this.logger.debug(`[ClientEvent] Event persisted to DB: ${payload.type}`);
+        this.logger.debug(
+          `[ClientEvent] Event persisted to DB: ${payload.type}`
+        );
       } else {
-        this.logger.warn(`[ClientEvent] No session found for client ${client.id}, event not persisted`);
+        this.logger.warn(
+          `[ClientEvent] No session found for client ${client.id}, event not persisted`
+        );
       }
     } catch (error) {
-      this.logger.error(`[ClientEvent] Failed to persist event: ${error.message}`);
+      this.logger.error(
+        `[ClientEvent] Failed to persist event: ${error.message}`
+      );
     }
   }
 
@@ -439,13 +575,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     switch (payload.type) {
       // Clipboard
       case ClientEventType.CLIPBOARD_COPY:
-        logMessage = `${icon} COPY - ${payload.data?.clipboardLength || 0} chars`;
+        logMessage = `${icon} COPY - ${
+          payload.data?.clipboardLength || 0
+        } chars`;
         break;
       case ClientEventType.CLIPBOARD_PASTE:
-        logMessage = `${icon} PASTE - ${payload.data?.clipboardLength || 0} chars`;
+        logMessage = `${icon} PASTE - ${
+          payload.data?.clipboardLength || 0
+        } chars`;
         break;
       case ClientEventType.CLIPBOARD_CUT:
-        logMessage = `${icon} CUT - ${payload.data?.clipboardLength || 0} chars`;
+        logMessage = `${icon} CUT - ${
+          payload.data?.clipboardLength || 0
+        } chars`;
         break;
 
       // Visibility
@@ -453,7 +595,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         logMessage = `${icon} TAB HIDDEN - User switched away`;
         break;
       case ClientEventType.TAB_VISIBLE:
-        logMessage = `${icon} Tab visible - User returned (hidden for ${payload.data?.hiddenDuration || 0}ms)`;
+        logMessage = `${icon} Tab visible - User returned (hidden for ${
+          payload.data?.hiddenDuration || 0
+        }ms)`;
         break;
       case ClientEventType.WINDOW_BLUR:
         logMessage = `${icon} WINDOW BLUR - Lost focus`;
@@ -512,7 +656,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: KeystrokeBatchPayload
   ): Promise<void> {
     const chatSession = this.chatService.getSession(client.id);
-    
+
     if (!chatSession) {
       this.logger.warn(`[Keystroke] No session found for client ${client.id}`);
       return;
@@ -531,6 +675,166 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
     } catch (error) {
       this.logger.error(`[Keystroke] Failed to save batch: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // Video Recording Handlers
+  // ============================================================================
+
+  @SubscribeMessage('video:start')
+  async handleVideoStart(@ConnectedSocket() client: Socket): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      this.logger.warn(`[Video] No session found for client ${client.id}`);
+      client.emit('video:error', { error: 'No session found' });
+      return;
+    }
+
+    try {
+      await this.sessionService.startVideoRecording(chatSession.id);
+      this.logger.log(
+        `[Video] Recording started for session ${chatSession.id}`
+      );
+      client.emit('video:started', { sessionId: chatSession.id });
+    } catch (error) {
+      this.logger.error(`[Video] Failed to start recording: ${error.message}`);
+      client.emit('video:error', { error: 'Failed to start recording' });
+    }
+  }
+
+  @SubscribeMessage('video:request-url')
+  async handleVideoUrlRequest(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: VideoUrlRequestPayload
+  ): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      this.logger.warn(`[Video] No session found for client ${client.id}`);
+      client.emit('video:url-error', {
+        chunkIndex: payload.chunkIndex,
+        error: 'No session found',
+      });
+      return;
+    }
+
+    try {
+      const { url, s3Key, expiresIn } = await this.s3Service.generateUploadUrl(
+        chatSession.id,
+        payload.chunkIndex
+      );
+
+      this.logger.log(
+        `[Video] Generated presigned URL for session ${chatSession.id}, chunk ${payload.chunkIndex}`
+      );
+
+      client.emit('video:url', {
+        chunkIndex: payload.chunkIndex,
+        url,
+        s3Key,
+        expiresIn,
+      });
+    } catch (error) {
+      this.logger.error(`[Video] Failed to generate URL: ${error.message}`);
+      client.emit('video:url-error', {
+        chunkIndex: payload.chunkIndex,
+        error: 'Failed to generate upload URL',
+      });
+    }
+  }
+
+  @SubscribeMessage('video:chunk-uploaded')
+  async handleVideoChunkUploaded(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: VideoChunkUploadedPayload
+  ): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      this.logger.warn(`[Video] No session found for client ${client.id}`);
+      return;
+    }
+
+    try {
+      await this.sessionService.addVideoChunk(chatSession.id, {
+        index: payload.chunkIndex,
+        s3Key: payload.s3Key,
+        size: payload.size,
+      });
+
+      this.logger.log(
+        `[Video] Chunk ${payload.chunkIndex} uploaded for session ${chatSession.id}`
+      );
+
+      client.emit('video:chunk-confirmed', {
+        chunkIndex: payload.chunkIndex,
+      });
+    } catch (error) {
+      this.logger.error(`[Video] Failed to record chunk: ${error.message}`);
+    }
+  }
+
+  @SubscribeMessage('video:error')
+  async handleVideoError(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: VideoErrorPayload
+  ): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      return;
+    }
+
+    this.logger.warn(
+      `[Video] Error for session ${chatSession.id}, chunk ${payload.chunkIndex}: ${payload.error}`
+    );
+  }
+
+  @SubscribeMessage('video:stop')
+  async handleVideoStop(@ConnectedSocket() client: Socket): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      this.logger.warn(`[Video] No session found for client ${client.id}`);
+      return;
+    }
+
+    try {
+      await this.sessionService.completeVideoRecording(chatSession.id);
+      this.logger.log(
+        `[Video] Recording stopped for session ${chatSession.id}`
+      );
+      client.emit('video:stopped', { sessionId: chatSession.id });
+    } catch (error) {
+      this.logger.error(`[Video] Failed to stop recording: ${error.message}`);
+    }
+  }
+
+  @SubscribeMessage('video:get-status')
+  async handleVideoGetStatus(@ConnectedSocket() client: Socket): Promise<void> {
+    const chatSession = this.chatService.getSession(client.id);
+
+    if (!chatSession) {
+      this.logger.warn(`[Video] No session found for client ${client.id}`);
+      client.emit('video:status', { status: 'idle', chunkCount: 0 });
+      return;
+    }
+
+    try {
+      const status = await this.sessionService.getVideoStatus(chatSession.id);
+      const lastChunkIndex = await this.sessionService.getLastChunkIndex(
+        chatSession.id
+      );
+
+      client.emit('video:status', {
+        ...status,
+        lastChunkIndex,
+      });
+    } catch (error) {
+      this.logger.error(`[Video] Failed to get status: ${error.message}`);
+      client.emit('video:status', { status: 'idle', chunkCount: 0 });
     }
   }
 }

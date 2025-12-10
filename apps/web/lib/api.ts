@@ -172,6 +172,25 @@ export interface TypingAnalysis {
   suspiciousPatterns: SuspiciousPattern[];
 }
 
+// Video chunk types
+export interface VideoChunk {
+  index: number;
+  s3Key: string;
+  size?: number;
+  uploadedAt: string;
+  downloadUrl: string;
+}
+
+export interface VideoChunksResponse {
+  sessionId: string;
+  videoStatus: 'idle' | 'recording' | 'completed' | 'failed';
+  videoStartedAt?: string;
+  videoEndedAt?: string;
+  chunks: VideoChunk[];
+  totalDurationMs: number;
+  chunkDurationMs: number;
+}
+
 // Session API functions
 export const sessionApi = {
   // Get paginated sessions
@@ -203,6 +222,58 @@ export const sessionApi = {
       // Return null if no keystroke data exists
       return null;
     }
+  },
+
+  // Get video chunks with download URLs
+  getVideoChunks: async (sessionId: string): Promise<VideoChunksResponse | null> => {
+    try {
+      const response = await api.get<VideoChunksResponse>(`/sessions/${sessionId}/video-chunks`);
+      // Convert relative URLs to full URLs
+      // The API returns /api/sessions/... so we need the base without /api
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333/api';
+      const baseUrl = apiBase.replace(/\/api\/?$/, ''); // Remove trailing /api
+      if (response.data?.chunks) {
+        response.data.chunks = response.data.chunks.map((chunk) => ({
+          ...chunk,
+          // Ensure downloadUrl is a full URL
+          downloadUrl: chunk.downloadUrl.startsWith('/')
+            ? `${baseUrl}${chunk.downloadUrl}`
+            : chunk.downloadUrl,
+        }));
+      }
+      return response.data;
+    } catch (error) {
+      // Return null if no video data exists
+      return null;
+    }
+  },
+};
+
+// System Config types
+export interface SystemConfig {
+  _id: string;
+  key: string;
+  faceRecognitionEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateConfigDto {
+  faceRecognitionEnabled?: boolean;
+}
+
+// Admin API functions
+export const adminApi = {
+  // Get current system config
+  getConfig: async (): Promise<SystemConfig> => {
+    const response = await api.get<SystemConfig>('/admin/config');
+    return response.data;
+  },
+
+  // Update system config
+  updateConfig: async (updates: UpdateConfigDto): Promise<SystemConfig> => {
+    const response = await api.put<SystemConfig>('/admin/config', updates);
+    return response.data;
   },
 };
 

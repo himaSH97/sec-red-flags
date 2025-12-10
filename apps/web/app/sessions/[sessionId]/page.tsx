@@ -214,6 +214,12 @@ export default function SessionDetailPage() {
     return counts;
   }, [events]);
 
+  // Handle event click from event list
+  const handleEventListClick = useCallback((event: SessionEvent) => {
+    setSelectedEventId(event._id);
+    setSelectedTime(new Date(event.timestamp));
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-zinc-100">
       {/* Header */}
@@ -667,10 +673,7 @@ export default function SessionDetailPage() {
                           <div
                             id={`event-${event._id}`}
                             key={event._id}
-                            onClick={() => {
-                              setSelectedEventId(event._id);
-                              setSelectedTime(new Date(event.timestamp));
-                            }}
+                            onClick={() => handleEventListClick(event)}
                             className={cn(
                               'relative rounded-lg border bg-white p-4 cursor-pointer',
                               'transition-all duration-200 hover:border-slate-300 hover:shadow-sm',

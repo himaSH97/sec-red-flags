@@ -17,6 +17,7 @@ export interface Message {
 }
 
 export interface FaceVerificationConfig {
+  enabled: boolean;
   checkIntervalMs: number;
   confidenceThreshold: number;
 }
@@ -53,6 +54,41 @@ export interface FaceVerifyFailed {
   confidence: number;
   message: string;
   shouldDisconnect: boolean;
+}
+
+// Video recording interfaces
+export interface VideoStartedEvent {
+  sessionId: string;
+}
+
+export interface VideoUrlEvent {
+  chunkIndex: number;
+  url: string;
+  s3Key: string;
+  expiresIn: number;
+}
+
+export interface VideoUrlErrorEvent {
+  chunkIndex: number;
+  error: string;
+}
+
+export interface VideoChunkConfirmedEvent {
+  chunkIndex: number;
+}
+
+export interface VideoStoppedEvent {
+  sessionId: string;
+}
+
+export interface VideoStatusEvent {
+  status: 'idle' | 'recording' | 'completed' | 'failed';
+  chunkCount: number;
+  lastChunkIndex?: number;
+}
+
+export interface VideoErrorEvent {
+  error: string;
 }
 
 class SocketService {
@@ -298,6 +334,156 @@ class SocketService {
     }
     console.log(`[SocketService] ⌨️ Sending keystroke batch #${batch.batchIndex} (${batch.keystrokes.length} keystrokes)`);
     this.socket.emit('keystroke:batch', batch);
+  }
+
+  // ============================================================================
+  // Video Recording Events
+  // ============================================================================
+
+  // Start video recording
+  sendVideoStart(): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot start video - not connected');
+      return;
+    }
+    console.log('[SocketService] 🎥 Starting video recording');
+    this.socket.emit('video:start');
+  }
+
+  // Request presigned URL for chunk upload
+  sendVideoUrlRequest(chunkIndex: number): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot request video URL - not connected');
+      return;
+    }
+    console.log(`[SocketService] 🎥 Requesting URL for chunk ${chunkIndex}`);
+    this.socket.emit('video:request-url', { chunkIndex });
+  }
+
+  // Notify server that chunk was uploaded
+  sendVideoChunkUploaded(chunkIndex: number, s3Key: string, size: number): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot confirm chunk upload - not connected');
+      return;
+    }
+    console.log(`[SocketService] 🎥 Chunk ${chunkIndex} uploaded`);
+    this.socket.emit('video:chunk-uploaded', { chunkIndex, s3Key, size });
+  }
+
+  // Report video error
+  sendVideoError(chunkIndex: number, error: string): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot report video error - not connected');
+      return;
+    }
+    console.log(`[SocketService] 🎥 Video error for chunk ${chunkIndex}: ${error}`);
+    this.socket.emit('video:error', { chunkIndex, error });
+  }
+
+  // Stop video recording
+  sendVideoStop(): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot stop video - not connected');
+      return;
+    }
+    console.log('[SocketService] 🎥 Stopping video recording');
+    this.socket.emit('video:stop');
+  }
+
+  // Get video recording status
+  sendVideoGetStatus(): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot get video status - not connected');
+      return;
+    }
+    console.log('[SocketService] 🎥 Getting video status');
+    this.socket.emit('video:get-status');
+  }
+
+  // Video event listeners
+  onVideoStarted(callback: (event: VideoStartedEvent) => void): void {
+    this.socket?.on('video:started', callback);
+  }
+
+  onVideoUrl(callback: (event: VideoUrlEvent) => void): void {
+    this.socket?.on('video:url', callback);
+  }
+
+  onVideoUrlError(callback: (event: VideoUrlErrorEvent) => void): void {
+    this.socket?.on('video:url-error', callback);
+  }
+
+  onVideoChunkConfirmed(callback: (event: VideoChunkConfirmedEvent) => void): void {
+    this.socket?.on('video:chunk-confirmed', callback);
+  }
+
+  onVideoStopped(callback: (event: VideoStoppedEvent) => void): void {
+    this.socket?.on('video:stopped', callback);
+  }
+
+  onVideoStatus(callback: (event: VideoStatusEvent) => void): void {
+    this.socket?.on('video:status', callback);
+  }
+
+  onVideoError(callback: (event: VideoErrorEvent) => void): void {
+    this.socket?.on('video:error', callback);
+  }
+
+  // Remove video event listeners
+  offVideoStarted(callback?: (event: VideoStartedEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:started', callback);
+    } else {
+      this.socket?.off('video:started');
+    }
+  }
+
+  offVideoUrl(callback?: (event: VideoUrlEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:url', callback);
+    } else {
+      this.socket?.off('video:url');
+    }
+  }
+
+  offVideoUrlError(callback?: (event: VideoUrlErrorEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:url-error', callback);
+    } else {
+      this.socket?.off('video:url-error');
+    }
+  }
+
+  offVideoChunkConfirmed(callback?: (event: VideoChunkConfirmedEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:chunk-confirmed', callback);
+    } else {
+      this.socket?.off('video:chunk-confirmed');
+    }
+  }
+
+  offVideoStopped(callback?: (event: VideoStoppedEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:stopped', callback);
+    } else {
+      this.socket?.off('video:stopped');
+    }
+  }
+
+  offVideoStatus(callback?: (event: VideoStatusEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:status', callback);
+    } else {
+      this.socket?.off('video:status');
+    }
+  }
+
+  offVideoError(callback?: (event: VideoErrorEvent) => void): void {
+    if (callback) {
+      this.socket?.off('video:error', callback);
+    } else {
+      this.socket?.off('video:error');
+    }
   }
 }
 

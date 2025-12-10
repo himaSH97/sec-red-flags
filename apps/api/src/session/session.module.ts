@@ -5,6 +5,7 @@ import { SessionEvent, SessionEventSchema } from './session-event.schema';
 import { SessionService } from './session.service';
 import { SessionController } from './session.controller';
 import { KeystrokeModule } from '../keystroke/keystroke.module';
+import { S3Module } from '../s3/s3.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { KeystrokeModule } from '../keystroke/keystroke.module';
       { name: SessionEvent.name, schema: SessionEventSchema },
     ]),
     forwardRef(() => KeystrokeModule),
+    S3Module,
   ],
   controllers: [SessionController],
   providers: [SessionService],

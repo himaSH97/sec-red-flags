@@ -74,6 +74,10 @@ export enum EventType {
   // Client Events - Window
   FULLSCREEN_EXIT = 'FULLSCREEN_EXIT',
   WINDOW_RESIZE = 'WINDOW_RESIZE',
+
+  // Chat Response Events
+  AI_RESPONDED = 'AI_RESPONDED',
+  USER_RESPONDED = 'USER_RESPONDED',
 }
 
 /**
@@ -152,10 +156,20 @@ export interface ClientEventData {
 }
 
 /**
+ * Data structure for chat response events
+ */
+export interface ChatEventData {
+  message: string;
+  role: 'user' | 'assistant';
+  contentPreview?: string; // Truncated content for display
+  contentLength?: number;
+}
+
+/**
  * Union type for all event data types.
  * Extend this as new event types are added.
  */
-export type EventData = FaceRecognitionEventData | FaceTrackingEventData | ClientEventData;
+export type EventData = FaceRecognitionEventData | FaceTrackingEventData | ClientEventData | ChatEventData;
 
 @Schema({ timestamps: false })
 export class SessionEvent {

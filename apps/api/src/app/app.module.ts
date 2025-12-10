@@ -7,6 +7,8 @@ import { ChatModule } from '../chat/chat.module';
 import { FaceModule } from '../face/face.module';
 import { SessionModule } from '../session/session.module';
 import { KeystrokeModule } from '../keystroke/keystroke.module';
+import { S3Module } from '../s3/s3.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { KeystrokeModule } from '../keystroke/keystroke.module';
     FaceModule,
     SessionModule,
     KeystrokeModule,
+    S3Module,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

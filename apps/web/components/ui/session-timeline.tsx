@@ -41,10 +41,15 @@ interface SessionTimelineProps {
   onEventSelect?: (event: SessionEvent) => void;
   selectedEventId?: string;
   className?: string;
+  /** External current time (for video sync) - if provided, timeline syncs to this time */
+  externalCurrentTime?: Date;
+  /** Whether to disable the timeline's internal play controls (when video controls playback) */
+  disablePlayback?: boolean;
 }
 
 // Event type to icon mapping
 const getEventIcon = (type: string) => {
+  if (type === 'AI_RESPONDED' || type === 'USER_RESPONDED') return MessageSquare;
   if (type.includes('FACE') || type.includes('GAZE') || type.includes('EYE')) return Eye;
   if (type.includes('SPEAK') || type.includes('TALK')) return MessageSquare;
   if (type.includes('TAB') || type.includes('WINDOW') || type.includes('MONITOR')) return Monitor;
@@ -78,16 +83,23 @@ const EventMarker: React.FC<EventMarkerProps> = ({
 }) => {
   const severity = getEventSeverity(event.type);
   const colors = getSeverityColors(severity);
+  const isDiamond = event.type === 'AI_RESPONDED' || event.type === 'USER_RESPONDED';
   
   return (
     <button
       className={cn(
-        'absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full transition-all duration-150 z-10',
+        'absolute top-1/2 transition-all duration-150 z-10',
         'hover:scale-150 hover:z-20 focus:outline-none focus:ring-2 focus:ring-offset-2',
         colors.bg,
+        isDiamond ? 'w-2.5 h-2.5' : 'w-3 h-3 rounded-full',
         isSelected && 'scale-150 ring-2 ring-offset-2 ring-slate-400 z-30'
       )}
-      style={{ left: `${position}%`, transform: `translateX(-50%) translateY(-50%)` }}
+      style={{ 
+        left: `${position}%`, 
+        transform: isDiamond 
+          ? `translateX(-50%) translateY(-50%) rotate(45deg)` 
+          : `translateX(-50%) translateY(-50%)` 
+      }}
       onClick={onClick}
       onMouseEnter={() => onHover(event)}
       onMouseLeave={() => onHover(null)}
@@ -183,6 +195,8 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
   onEventSelect,
   selectedEventId,
   className,
+  externalCurrentTime,
+  disablePlayback = false,
 }) => {
   // Calculate end time if not provided
   const computedEndTime = useMemo(() => {
@@ -258,6 +272,13 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
     window.addEventListener('mouseup', handleGlobalMouseUp);
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
   }, []);
+
+  // Sync with external current time (from video player)
+  useEffect(() => {
+    if (externalCurrentTime && !isDragging) {
+      setCurrentTime(externalCurrentTime);
+    }
+  }, [externalCurrentTime, isDragging]);
   
   // Play/Pause functionality
   useEffect(() => {
@@ -358,19 +379,21 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
           >
             <ChevronDown className="h-4 w-4 rotate-90" />
           </Button>
-          <Button
-            variant="default"
-            size="icon"
-            onClick={() => setIsPlaying(!isPlaying)}
-            className="h-9 w-9"
-            title={isPlaying ? 'Pause' : 'Play'}
-          >
-            {isPlaying ? (
-              <Pause className="h-4 w-4" />
-            ) : (
-              <Play className="h-4 w-4 ml-0.5" />
-            )}
-          </Button>
+          {!disablePlayback && (
+            <Button
+              variant="default"
+              size="icon"
+              onClick={() => setIsPlaying(!isPlaying)}
+              className="h-9 w-9"
+              title={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Play className="h-4 w-4 ml-0.5" />
+              )}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -594,6 +617,11 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
             </div>
           );
         })}
+        <span className="text-slate-400">|</span>
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rotate-45 bg-blue-500" />
+          <span className="text-slate-600">Chat</span>
+        </div>
       </div>
     </div>
   );

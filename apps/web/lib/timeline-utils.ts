@@ -149,10 +149,16 @@ export const getEventSeverity = (eventType: string): EventSeverity => {
     'EYES_OPENED',
     'HEAD_POSITION_NORMAL',
   ];
+
+  const info = [
+    'AI_RESPONDED',
+    'USER_RESPONDED',
+  ];
   
   if (critical.includes(eventType)) return 'critical';
   if (warning.includes(eventType)) return 'warning';
   if (success.includes(eventType)) return 'success';
+  if (info.includes(eventType)) return 'info';
   return 'info';
 };
 
