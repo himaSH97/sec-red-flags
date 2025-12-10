@@ -41,6 +41,7 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -181,6 +182,54 @@ export default function ChatPage() {
       streamRef.current = null;
     }
   }, []);
+
+  // End session - cleanup and redirect to session page
+  const endSession = useCallback(() => {
+    console.log('[ChatPage] Ending session...');
+    
+    // Mark as intentional cleanup
+    isCleaningUpRef.current = true;
+    
+    // Clear verification interval
+    if (verificationIntervalRef.current) {
+      clearInterval(verificationIntervalRef.current);
+      verificationIntervalRef.current = null;
+    }
+    
+    // Clear face tracking interval
+    if (trackingIntervalRef.current) {
+      clearInterval(trackingIntervalRef.current);
+      trackingIntervalRef.current = null;
+    }
+    
+    // Stop camera
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    
+    // Destroy face tracking service
+    faceTrackingService.destroy();
+    
+    // Disconnect socket
+    socketService.disconnect();
+    
+    // Clear session storage
+    sessionStorage.removeItem('referenceFace');
+    
+    // Show toast
+    toast.success('Session Ended', {
+      description: 'Redirecting to session details...',
+      duration: 2000,
+    });
+    
+    // Redirect to session page
+    if (sessionId) {
+      router.push(`/sessions/${sessionId}`);
+    } else {
+      router.push('/sessions');
+    }
+  }, [sessionId, router]);
 
   // Add a tracking event to the log
   const addTrackingEvent = useCallback(
@@ -1025,6 +1074,18 @@ export default function ChatPage() {
                 <WifiOff className="h-4 w-4" />
               </div>
             )}
+
+            {/* End Session button */}
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={endSession}
+              disabled={!sessionId}
+              className="ml-2"
+            >
+              <LogOut className="h-4 w-4 mr-1.5" />
+              End Session
+            </Button>
           </div>
         </div>
       </header>
