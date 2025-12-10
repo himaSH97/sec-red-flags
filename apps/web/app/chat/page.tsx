@@ -19,11 +19,14 @@ import {
   FaceTrackingData,
   ExtendedTrackingMetrics,
 } from '@/lib/face-tracking';
+import { clientEventsService } from '@/lib/client-events';
 import {
   FaceTrackingEventPayload,
   FaceTrackingEventType,
   TrackingEvent,
   TrackingEventSeverity,
+  ClientEvent,
+  ClientEventType,
 } from '@sec-flags/shared';
 import {
   ArrowLeft,
@@ -220,6 +223,9 @@ export default function ChatPage() {
     
     // Destroy face tracking service
     faceTrackingService.destroy();
+    
+    // Cleanup client events service
+    clientEventsService.cleanup();
     
     // Disconnect socket
     socketService.disconnect();
@@ -913,6 +919,52 @@ export default function ChatPage() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  // Initialize client events service for tracking copy/paste, tab switching, etc.
+  useEffect(() => {
+    console.log('[ChatPage] Initializing client events service...');
+    clientEventsService.initialize();
+
+    // Subscribe to client events and add them to the tracking log
+    const unsubscribe = clientEventsService.subscribe((event: ClientEvent) => {
+      // Map client event severity to tracking event severity
+      const severity: TrackingEventSeverity = 
+        event.severity === 'critical' ? 'warning' : event.severity;
+
+      // Add to the tracking events log
+      const trackingEvent: TrackingEvent = {
+        id: event.id,
+        type: event.type as unknown as FaceTrackingEventType, // Client events have their own type
+        timestamp: new Date(event.timestamp),
+        message: event.message,
+        details: event.details,
+        severity,
+      };
+
+      setTrackingEvents((prev) => {
+        const newEvents = [trackingEvent, ...prev].slice(0, 100);
+        return newEvents;
+      });
+
+      // Send to backend
+      if (socketService.isConnected()) {
+        socketService.sendClientEvent({
+          type: event.type as ClientEventType,
+          timestamp: event.timestamp,
+          message: event.message,
+          severity: event.severity,
+          details: event.details,
+          data: event.data,
+        });
+      }
+    });
+
+    return () => {
+      console.log('[ChatPage] Cleaning up client events service...');
+      unsubscribe();
+      clientEventsService.cleanup();
     };
   }, []);
 

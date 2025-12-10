@@ -2,10 +2,11 @@ import { io, Socket } from 'socket.io-client';
 import {
   FaceTrackingEventType,
   FaceTrackingEventPayload,
+  ClientEventPayload,
 } from '@sec-flags/shared';
 
 // Re-export for convenience
-export type { FaceTrackingEventType, FaceTrackingEventPayload };
+export type { FaceTrackingEventType, FaceTrackingEventPayload, ClientEventPayload };
 
 export interface Message {
   id: string;
@@ -276,6 +277,16 @@ class SocketService {
     }
     console.log('[SocketService] 📡 Sending face tracking event:', event.type, event.message);
     this.socket.emit('face:tracking', event);
+  }
+
+  // Send client event (copy/paste, tab switch, etc.)
+  sendClientEvent(event: ClientEventPayload): void {
+    if (!this.socket?.connected) {
+      console.error('[SocketService] Cannot send client event - not connected');
+      return;
+    }
+    console.log('[SocketService] 📡 Sending client event:', event.type, event.message);
+    this.socket.emit('client:event', event);
   }
 }
 

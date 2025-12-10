@@ -40,12 +40,40 @@ export enum EventType {
   EXPRESSION_CONFUSED = 'EXPRESSION_CONFUSED',
   LIP_READING_DETECTED = 'LIP_READING_DETECTED',
   
-  // Browser/Session
+  // Browser/Session (face tracking)
   TAB_SWITCHED_AWAY = 'TAB_SWITCHED_AWAY',
   TAB_RETURNED = 'TAB_RETURNED',
   WINDOW_BLUR = 'WINDOW_BLUR',
   WINDOW_FOCUS = 'WINDOW_FOCUS',
   MULTIPLE_FACES_DETECTED = 'MULTIPLE_FACES_DETECTED',
+  
+  // Face Verification
+  VERIFICATION_STARTED = 'VERIFICATION_STARTED',
+  VERIFICATION_SUCCESS = 'VERIFICATION_SUCCESS',
+  VERIFICATION_FAILED = 'VERIFICATION_FAILED',
+  VERIFICATION_ERROR = 'VERIFICATION_ERROR',
+  
+  // Client Events - Clipboard
+  CLIPBOARD_COPY = 'CLIPBOARD_COPY',
+  CLIPBOARD_PASTE = 'CLIPBOARD_PASTE',
+  CLIPBOARD_CUT = 'CLIPBOARD_CUT',
+  
+  // Client Events - Visibility
+  TAB_HIDDEN = 'TAB_HIDDEN',
+  TAB_VISIBLE = 'TAB_VISIBLE',
+  CLIENT_WINDOW_BLUR = 'CLIENT_WINDOW_BLUR',
+  CLIENT_WINDOW_FOCUS = 'CLIENT_WINDOW_FOCUS',
+  
+  // Client Events - Keyboard
+  DEVTOOLS_OPENED = 'DEVTOOLS_OPENED',
+  PRINT_SCREEN = 'PRINT_SCREEN',
+  
+  // Client Events - Context
+  CONTEXT_MENU = 'CONTEXT_MENU',
+  
+  // Client Events - Window
+  FULLSCREEN_EXIT = 'FULLSCREEN_EXIT',
+  WINDOW_RESIZE = 'WINDOW_RESIZE',
 }
 
 /**
@@ -87,10 +115,47 @@ export interface FaceTrackingEventData {
 }
 
 /**
+ * Data structure for client events (copy/paste, tab switching, etc.)
+ */
+export interface ClientEventData {
+  message: string;
+  details?: string;
+  severity: 'info' | 'warning' | 'critical';
+  
+  // Clipboard data
+  clipboardLength?: number;
+  hasText?: boolean;
+  
+  // Visibility data
+  visibilityState?: string;
+  hiddenDuration?: number;
+  
+  // Window data
+  windowWidth?: number;
+  windowHeight?: number;
+  previousWidth?: number;
+  previousHeight?: number;
+  isFullscreen?: boolean;
+  
+  // Keyboard data
+  key?: string;
+  modifiers?: {
+    ctrl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+  };
+  
+  // Context
+  targetElement?: string;
+  url?: string;
+}
+
+/**
  * Union type for all event data types.
  * Extend this as new event types are added.
  */
-export type EventData = FaceRecognitionEventData | FaceTrackingEventData;
+export type EventData = FaceRecognitionEventData | FaceTrackingEventData | ClientEventData;
 
 @Schema({ timestamps: false })
 export class SessionEvent {

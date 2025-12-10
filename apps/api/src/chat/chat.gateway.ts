@@ -12,7 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
-import { FaceTrackingEventPayload, FaceTrackingEventType } from '@sec-flags/shared';
+import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType } from '@sec-flags/shared';
 
 interface MessagePayload {
   content: string;
@@ -393,6 +393,113 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (isWarning && payload.data) {
       this.logger.debug(
         `[FaceTracking] Details: ${JSON.stringify(payload.data)}`
+      );
+    }
+  }
+
+  @SubscribeMessage('client:event')
+  async handleClientEvent(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: ClientEventPayload
+  ): Promise<void> {
+    const timestamp = new Date(payload.timestamp).toISOString();
+    const isWarning = payload.severity === 'warning' || payload.severity === 'critical';
+
+    // Log to console
+    this.logClientEvent(client.id, payload, isWarning, timestamp);
+
+    // Persist to MongoDB
+    try {
+      const chatSession = this.chatService.getSession(client.id);
+      if (chatSession) {
+        await this.sessionService.logClientEvent(chatSession.id, payload);
+        this.logger.debug(`[ClientEvent] Event persisted to DB: ${payload.type}`);
+      } else {
+        this.logger.warn(`[ClientEvent] No session found for client ${client.id}, event not persisted`);
+      }
+    } catch (error) {
+      this.logger.error(`[ClientEvent] Failed to persist event: ${error.message}`);
+    }
+  }
+
+  /**
+   * Log client event to console with formatted output
+   */
+  private logClientEvent(
+    clientId: string,
+    payload: ClientEventPayload,
+    isWarning: boolean,
+    timestamp: string
+  ): void {
+    let logMessage = '';
+    const icon = isWarning ? '⚠️' : 'ℹ️';
+
+    switch (payload.type) {
+      // Clipboard
+      case ClientEventType.CLIPBOARD_COPY:
+        logMessage = `${icon} COPY - ${payload.data?.clipboardLength || 0} chars`;
+        break;
+      case ClientEventType.CLIPBOARD_PASTE:
+        logMessage = `${icon} PASTE - ${payload.data?.clipboardLength || 0} chars`;
+        break;
+      case ClientEventType.CLIPBOARD_CUT:
+        logMessage = `${icon} CUT - ${payload.data?.clipboardLength || 0} chars`;
+        break;
+
+      // Visibility
+      case ClientEventType.TAB_HIDDEN:
+        logMessage = `${icon} TAB HIDDEN - User switched away`;
+        break;
+      case ClientEventType.TAB_VISIBLE:
+        logMessage = `${icon} Tab visible - User returned (hidden for ${payload.data?.hiddenDuration || 0}ms)`;
+        break;
+      case ClientEventType.WINDOW_BLUR:
+        logMessage = `${icon} WINDOW BLUR - Lost focus`;
+        break;
+      case ClientEventType.WINDOW_FOCUS:
+        logMessage = `${icon} Window focus - Regained`;
+        break;
+
+      // Keyboard
+      case ClientEventType.DEVTOOLS_OPENED:
+        logMessage = `${icon} DEVTOOLS OPENED - ${payload.details}`;
+        break;
+      case ClientEventType.PRINT_SCREEN:
+        logMessage = `${icon} PRINT SCREEN - Screenshot attempted`;
+        break;
+
+      // Context
+      case ClientEventType.CONTEXT_MENU:
+        logMessage = `${icon} Context menu opened`;
+        break;
+
+      // Window
+      case ClientEventType.FULLSCREEN_EXIT:
+        logMessage = `${icon} FULLSCREEN EXIT`;
+        break;
+      case ClientEventType.WINDOW_RESIZE:
+        logMessage = `${icon} Window resized to ${payload.data?.windowWidth}x${payload.data?.windowHeight}`;
+        break;
+
+      default:
+        logMessage = `${icon} ${payload.message}`;
+    }
+
+    // Log based on severity
+    if (isWarning) {
+      this.logger.warn(
+        `[ClientEvent] Client ${clientId} | ${timestamp} | ${logMessage}`
+      );
+    } else {
+      this.logger.log(
+        `[ClientEvent] Client ${clientId} | ${timestamp} | ${logMessage}`
+      );
+    }
+
+    // Log detailed data for warnings
+    if (isWarning && payload.data) {
+      this.logger.debug(
+        `[ClientEvent] Details: ${JSON.stringify(payload.data)}`
       );
     }
   }

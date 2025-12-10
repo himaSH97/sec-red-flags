@@ -8,8 +8,9 @@ import {
   EventType,
   EventData,
   FaceTrackingEventData,
+  ClientEventData,
 } from './session-event.schema';
-import { FaceTrackingEventPayload, FaceTrackingEventType } from '@sec-flags/shared';
+import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType } from '@sec-flags/shared';
 
 /**
  * Map frontend event types to backend EventType enum
@@ -50,6 +51,39 @@ const TRACKING_EVENT_TYPE_MAP: Record<FaceTrackingEventType, EventType> = {
   'window_blur': EventType.WINDOW_BLUR,
   'window_focus': EventType.WINDOW_FOCUS,
   'multiple_faces_detected': EventType.MULTIPLE_FACES_DETECTED,
+  
+  // Face Verification
+  'verification_started': EventType.VERIFICATION_STARTED,
+  'verification_success': EventType.VERIFICATION_SUCCESS,
+  'verification_failed': EventType.VERIFICATION_FAILED,
+  'verification_error': EventType.VERIFICATION_ERROR,
+};
+
+/**
+ * Map client event types to backend EventType enum
+ */
+const CLIENT_EVENT_TYPE_MAP: Record<ClientEventType, EventType> = {
+  // Clipboard
+  [ClientEventType.CLIPBOARD_COPY]: EventType.CLIPBOARD_COPY,
+  [ClientEventType.CLIPBOARD_PASTE]: EventType.CLIPBOARD_PASTE,
+  [ClientEventType.CLIPBOARD_CUT]: EventType.CLIPBOARD_CUT,
+  
+  // Visibility
+  [ClientEventType.TAB_HIDDEN]: EventType.TAB_HIDDEN,
+  [ClientEventType.TAB_VISIBLE]: EventType.TAB_VISIBLE,
+  [ClientEventType.WINDOW_BLUR]: EventType.CLIENT_WINDOW_BLUR,
+  [ClientEventType.WINDOW_FOCUS]: EventType.CLIENT_WINDOW_FOCUS,
+  
+  // Keyboard
+  [ClientEventType.DEVTOOLS_OPENED]: EventType.DEVTOOLS_OPENED,
+  [ClientEventType.PRINT_SCREEN]: EventType.PRINT_SCREEN,
+  
+  // Context
+  [ClientEventType.CONTEXT_MENU]: EventType.CONTEXT_MENU,
+  
+  // Window
+  [ClientEventType.FULLSCREEN_EXIT]: EventType.FULLSCREEN_EXIT,
+  [ClientEventType.WINDOW_RESIZE]: EventType.WINDOW_RESIZE,
 };
 
 @Injectable()
@@ -205,6 +239,51 @@ export class SessionService {
       headMovementCount: payload.data?.headMovementCount,
       browDown: payload.data?.browDown,
       lipMovement: payload.data?.lipMovement,
+    };
+
+    // Store the full payload as rawData for debugging/analysis
+    const rawData: Record<string, unknown> = {
+      originalType: payload.type,
+      timestamp: payload.timestamp,
+      ...payload.data,
+    };
+
+    return this.logEvent(sessionId, eventType, data, rawData);
+  }
+
+  /**
+   * Log a client event (copy/paste, tab switch, etc.)
+   */
+  async logClientEvent(
+    sessionId: string,
+    payload: ClientEventPayload,
+  ): Promise<SessionEventDocument> {
+    // Map client event type to backend EventType
+    const eventType = CLIENT_EVENT_TYPE_MAP[payload.type];
+    
+    if (!eventType) {
+      this.logger.warn(`Unknown client event type: ${payload.type}`);
+      throw new Error(`Unknown client event type: ${payload.type}`);
+    }
+
+    // Build the event data
+    const data: ClientEventData = {
+      message: payload.message,
+      details: payload.details,
+      severity: payload.severity,
+      clipboardLength: payload.data?.clipboardLength,
+      hasText: payload.data?.hasText,
+      visibilityState: payload.data?.visibilityState,
+      hiddenDuration: payload.data?.hiddenDuration,
+      windowWidth: payload.data?.windowWidth,
+      windowHeight: payload.data?.windowHeight,
+      previousWidth: payload.data?.previousWidth,
+      previousHeight: payload.data?.previousHeight,
+      isFullscreen: payload.data?.isFullscreen,
+      key: payload.data?.key,
+      modifiers: payload.data?.modifiers,
+      targetElement: payload.data?.targetElement,
+      url: payload.data?.url,
     };
 
     // Store the full payload as rawData for debugging/analysis
