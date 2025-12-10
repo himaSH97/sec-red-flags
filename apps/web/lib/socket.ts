@@ -274,6 +274,7 @@ class SocketService {
       console.error('[SocketService] Cannot send tracking event - not connected');
       return;
     }
+    console.log('[SocketService] 📡 Sending face tracking event:', event.type, event.message);
     this.socket.emit('face:tracking', event);
   }
 }

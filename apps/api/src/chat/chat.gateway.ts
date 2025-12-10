@@ -12,7 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { ChatService, ChatMessage } from './chat.service';
 import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
-import { FaceTrackingEventPayload } from '@sec-flags/shared';
+import { FaceTrackingEventPayload, FaceTrackingEventType } from '@sec-flags/shared';
 
 interface MessagePayload {
   content: string;
@@ -25,6 +25,24 @@ interface FaceReferencePayload {
 interface FaceVerifyPayload {
   imageBase64: string;
 }
+
+// Warning event types that require immediate attention
+const WARNING_EVENT_TYPES: FaceTrackingEventType[] = [
+  'face_away',
+  'face_not_detected',
+  'looking_away',
+  'talking',
+  'eyes_closed_extended',
+  'excessive_blinking',
+  'squinting_detected',
+  'head_movement_excessive',
+  'head_tilted',
+  'expression_confused',
+  'lip_reading_detected',
+  'tab_switched_away',
+  'window_blur',
+  'multiple_faces_detected',
+];
 
 @WebSocketGateway({
   cors: {
@@ -238,56 +256,144 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('face:tracking')
-  handleFaceTracking(
+  async handleFaceTracking(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceTrackingEventPayload
-  ): void {
+  ): Promise<void> {
     const timestamp = new Date(payload.timestamp).toISOString();
-    const isWarning = ['face_away', 'looking_away', 'talking'].includes(
-      payload.type
-    );
+    const isWarning = WARNING_EVENT_TYPES.includes(payload.type);
 
+    // Log to console
+    this.logTrackingEvent(client.id, payload, isWarning, timestamp);
+
+    // Persist to MongoDB
+    try {
+      const chatSession = this.chatService.getSession(client.id);
+      if (chatSession) {
+        await this.sessionService.logFaceTrackingEvent(chatSession.id, payload);
+        this.logger.debug(`[FaceTracking] Event persisted to DB: ${payload.type}`);
+      } else {
+        this.logger.warn(`[FaceTracking] No session found for client ${client.id}, event not persisted`);
+      }
+    } catch (error) {
+      this.logger.error(`[FaceTracking] Failed to persist event: ${error.message}`);
+    }
+  }
+
+  /**
+   * Log tracking event to console with formatted output
+   */
+  private logTrackingEvent(
+    clientId: string,
+    payload: FaceTrackingEventPayload,
+    isWarning: boolean,
+    timestamp: string
+  ): void {
     // Format the log message based on event type
     let logMessage = '';
     const icon = isWarning ? '⚠️' : '✓';
 
     switch (payload.type) {
+      // Face Position
       case 'face_away':
         logMessage = `${icon} FACE AWAY - ${payload.details}`;
         break;
       case 'face_returned':
         logMessage = `${icon} Face returned to screen`;
         break;
+      case 'face_not_detected':
+        logMessage = `${icon} FACE NOT DETECTED - No face visible`;
+        break;
+      case 'face_detected':
+        logMessage = `${icon} Face detected`;
+        break;
+
+      // Gaze
       case 'looking_away':
         logMessage = `${icon} LOOKING AWAY - Gaze: ${payload.data?.gazeDirection}`;
         break;
       case 'looking_back':
         logMessage = `${icon} Eyes returned to screen`;
         break;
+
+      // Eye State
+      case 'eyes_closed_extended':
+        logMessage = `${icon} EYES CLOSED - Duration: ${payload.data?.eyeClosureDuration?.toFixed(1)}s`;
+        break;
+      case 'eyes_opened':
+        logMessage = `${icon} Eyes opened`;
+        break;
+      case 'excessive_blinking':
+        logMessage = `${icon} EXCESSIVE BLINKING - Rate: ${payload.data?.blinkRate} blinks/min`;
+        break;
+      case 'squinting_detected':
+        logMessage = `${icon} SQUINTING - L:${payload.data?.squintLevel?.left}% R:${payload.data?.squintLevel?.right}%`;
+        break;
+
+      // Speaking
       case 'talking':
         logMessage = `${icon} TALKING DETECTED - Mouth: ${payload.data?.mouthOpenness}% open`;
         break;
       case 'stopped_talking':
         logMessage = `${icon} Stopped talking`;
         break;
+
+      // Head Movement
+      case 'head_movement_excessive':
+        logMessage = `${icon} EXCESSIVE HEAD MOVEMENT - ${payload.data?.headMovementCount} movements`;
+        break;
+      case 'head_tilted':
+        logMessage = `${icon} HEAD TILTED - Roll: ${payload.data?.headPose?.roll}°`;
+        break;
+      case 'head_position_normal':
+        logMessage = `${icon} Head position normal`;
+        break;
+
+      // Expression
+      case 'expression_confused':
+        logMessage = `${icon} CONFUSED EXPRESSION detected`;
+        break;
+      case 'lip_reading_detected':
+        logMessage = `${icon} LIP READING - Movement: ${payload.data?.lipMovement}%`;
+        break;
+
+      // Browser/Session
+      case 'tab_switched_away':
+        logMessage = `${icon} TAB SWITCHED AWAY - User left the tab`;
+        break;
+      case 'tab_returned':
+        logMessage = `${icon} Tab returned`;
+        break;
+      case 'window_blur':
+        logMessage = `${icon} WINDOW BLUR - Lost focus`;
+        break;
+      case 'window_focus':
+        logMessage = `${icon} Window focus regained`;
+        break;
+      case 'multiple_faces_detected':
+        logMessage = `${icon} MULTIPLE FACES - ${payload.data?.faceCount} faces detected`;
+        break;
+
       default:
         logMessage = `${icon} ${payload.message}`;
     }
 
-    // Log with full context
+    // Log based on severity
     if (isWarning) {
       this.logger.warn(
-        `[FaceTracking] Client ${client.id} | ${timestamp} | ${logMessage}`
+        `[FaceTracking] Client ${clientId} | ${timestamp} | ${logMessage}`
       );
     } else {
       this.logger.log(
-        `[FaceTracking] Client ${client.id} | ${timestamp} | ${logMessage}`
+        `[FaceTracking] Client ${clientId} | ${timestamp} | ${logMessage}`
       );
     }
 
-    // Log additional data for debugging if present
-    if (payload.data && isWarning) {
-      this.logger.debug(`[FaceTracking] Data: ${JSON.stringify(payload.data)}`);
+    // Log detailed data for warnings
+    if (isWarning && payload.data) {
+      this.logger.debug(
+        `[FaceTracking] Details: ${JSON.stringify(payload.data)}`
+      );
     }
   }
 }

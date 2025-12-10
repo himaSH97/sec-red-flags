@@ -11,6 +11,8 @@ import {
   ExpressionMetrics,
   HeadPose,
   FaceTrackingData,
+  DEFAULT_TRACKING_THRESHOLDS,
+  TrackingThresholds,
 } from '@sec-flags/shared';
 
 // Re-export types for convenience
@@ -59,12 +61,64 @@ const BLENDSHAPES = {
   browOuterUpLeft: 'browOuterUpLeft',
   browOuterUpRight: 'browOuterUpRight',
 
-  // Other useful ones
+  // Eye squint
   eyeSquintLeft: 'eyeSquintLeft',
   eyeSquintRight: 'eyeSquintRight',
-  cheekPuff: 'cheekPuff',
+
+  // Lip movements (for lip reading detection)
   mouthPucker: 'mouthPucker',
+  mouthLeft: 'mouthLeft',
+  mouthRight: 'mouthRight',
+  mouthRollLower: 'mouthRollLower',
+  mouthRollUpper: 'mouthRollUpper',
+  mouthShrugLower: 'mouthShrugLower',
+  mouthShrugUpper: 'mouthShrugUpper',
+  mouthClose: 'mouthClose',
+  mouthFunnel: 'mouthFunnel',
+  mouthDimpleLeft: 'mouthDimpleLeft',
+  mouthDimpleRight: 'mouthDimpleRight',
+  mouthStretchLeft: 'mouthStretchLeft',
+  mouthStretchRight: 'mouthStretchRight',
+  mouthPressLeft: 'mouthPressLeft',
+  mouthPressRight: 'mouthPressRight',
+  mouthLowerDownLeft: 'mouthLowerDownLeft',
+  mouthLowerDownRight: 'mouthLowerDownRight',
+  mouthUpperUpLeft: 'mouthUpperUpLeft',
+  mouthUpperUpRight: 'mouthUpperUpRight',
+
+  // Other useful ones
+  cheekPuff: 'cheekPuff',
 } as const;
+
+// ============================================================================
+// Extended Tracking Metrics Interface
+// ============================================================================
+
+export interface ExtendedTrackingMetrics {
+  // Eye state
+  isSquinting: boolean;
+  squintLevel: { left: number; right: number };
+  areEyesClosed: boolean;
+  eyeClosureDuration: number; // seconds
+
+  // Blink tracking
+  blinkCount: number;
+  blinkRate: number; // blinks per minute
+
+  // Head movement
+  isHeadTilted: boolean;
+  headMovementCount: number; // movements in time window
+  isExcessiveHeadMovement: boolean;
+
+  // Expression
+  isConfused: boolean;
+  browDown: number;
+  isLipReading: boolean;
+  lipMovement: number;
+
+  // Face count
+  faceCount: number;
+}
 
 // ============================================================================
 // Face Tracking Service
@@ -77,11 +131,31 @@ export class FaceTrackingService {
   private lastProcessTime = 0;
   private minProcessInterval = 100; // Minimum ms between processing
 
+  // Configurable thresholds
+  private thresholds: TrackingThresholds = DEFAULT_TRACKING_THRESHOLDS;
+
+  // Blink tracking
+  private blinkHistory: number[] = []; // Timestamps of blinks
+  private wasBlinking = false;
+
+  // Eye closure tracking
+  private eyeClosureStartTime: number | null = null;
+  private eyeClosureDuration = 0;
+
+  // Head movement tracking
+  private headPoseHistory: Array<{
+    yaw: number;
+    pitch: number;
+    timestamp: number;
+  }> = [];
+  private readonly HEAD_MOVEMENT_WINDOW_MS = 10000; // 10 seconds
+  private readonly HEAD_MOVEMENT_THRESHOLD_DEGREES = 15; // Degrees to count as movement
+
   /**
    * Initialize the MediaPipe FaceLandmarker
    * Must be called before processing any frames
    */
-  async initialize(): Promise<void> {
+  async initialize(maxFaces = 2): Promise<void> {
     if (this.isInitialized || this.isInitializing) {
       return;
     }
@@ -104,7 +178,7 @@ export class FaceTrackingService {
           delegate: 'GPU', // Use GPU for better performance
         },
         runningMode: 'VIDEO',
-        numFaces: 1,
+        numFaces: maxFaces, // Support multiple face detection
         outputFaceBlendshapes: true,
         outputFacialTransformationMatrixes: true,
       });
@@ -119,6 +193,20 @@ export class FaceTrackingService {
     } finally {
       this.isInitializing = false;
     }
+  }
+
+  /**
+   * Set custom thresholds
+   */
+  setThresholds(thresholds: Partial<TrackingThresholds>): void {
+    this.thresholds = { ...this.thresholds, ...thresholds };
+  }
+
+  /**
+   * Get current thresholds
+   */
+  getThresholds(): TrackingThresholds {
+    return { ...this.thresholds };
   }
 
   /**
@@ -160,10 +248,224 @@ export class FaceTrackingService {
   }
 
   /**
+   * Get extended tracking metrics
+   */
+  getExtendedMetrics(data: FaceTrackingData): ExtendedTrackingMetrics {
+    const blendshapes = data.rawBlendshapes || {};
+
+    // Calculate squint levels
+    const leftSquint = Math.round(
+      (blendshapes[BLENDSHAPES.eyeSquintLeft] || 0) * 100
+    );
+    const rightSquint = Math.round(
+      (blendshapes[BLENDSHAPES.eyeSquintRight] || 0) * 100
+    );
+    const isSquinting =
+      leftSquint > this.thresholds.squintThreshold ||
+      rightSquint > this.thresholds.squintThreshold;
+
+    // Calculate brow down for confusion
+    const browDown = Math.round(
+      (((blendshapes[BLENDSHAPES.browDownLeft] || 0) +
+        (blendshapes[BLENDSHAPES.browDownRight] || 0)) /
+        2) *
+        100
+    );
+    const browInnerUp = Math.round(
+      (blendshapes[BLENDSHAPES.browInnerUp] || 0) * 100
+    );
+    const isConfused =
+      browInnerUp > this.thresholds.confusedBrowInnerUp &&
+      browDown > this.thresholds.confusedBrowDown;
+
+    // Calculate lip movement for lip reading detection
+    const lipMovement = this.calculateLipMovement(blendshapes);
+    const jawOpen = (blendshapes[BLENDSHAPES.jawOpen] || 0) * 100;
+    const isLipReading =
+      lipMovement > this.thresholds.lipReadingLipMovement &&
+      jawOpen < this.thresholds.lipReadingJawOpenMax;
+
+    // Eye closure detection
+    const areEyesClosed =
+      data.eyes.leftEyeOpenness < 20 && data.eyes.rightEyeOpenness < 20;
+
+    // Check if head is tilted
+    const isHeadTilted =
+      Math.abs(data.headPose.roll) > this.thresholds.headTiltRollDegrees;
+
+    // Get head movement count
+    const headMovementCount = this.getHeadMovementCount();
+    const isExcessiveHeadMovement =
+      headMovementCount > this.thresholds.headMovementCountThreshold;
+
+    return {
+      isSquinting,
+      squintLevel: { left: leftSquint, right: rightSquint },
+      areEyesClosed,
+      eyeClosureDuration: this.eyeClosureDuration,
+      blinkCount: this.blinkHistory.length,
+      blinkRate: this.getBlinkRate(),
+      isHeadTilted,
+      headMovementCount,
+      isExcessiveHeadMovement,
+      isConfused,
+      browDown,
+      isLipReading,
+      lipMovement,
+      faceCount: 1, // Will be updated in parseResult if multiple faces
+    };
+  }
+
+  /**
+   * Calculate lip movement without jaw opening (for lip reading detection)
+   */
+  private calculateLipMovement(blendshapes: Record<string, number>): number {
+    // Sum of various lip movements that indicate speaking without opening mouth
+    const movements = [
+      blendshapes[BLENDSHAPES.mouthPucker] || 0,
+      blendshapes[BLENDSHAPES.mouthLeft] || 0,
+      blendshapes[BLENDSHAPES.mouthRight] || 0,
+      blendshapes[BLENDSHAPES.mouthRollLower] || 0,
+      blendshapes[BLENDSHAPES.mouthRollUpper] || 0,
+      blendshapes[BLENDSHAPES.mouthPressLeft] || 0,
+      blendshapes[BLENDSHAPES.mouthPressRight] || 0,
+      blendshapes[BLENDSHAPES.mouthStretchLeft] || 0,
+      blendshapes[BLENDSHAPES.mouthStretchRight] || 0,
+    ];
+
+    // Average the movements and convert to percentage
+    const avgMovement = movements.reduce((a, b) => a + b, 0) / movements.length;
+    return Math.round(avgMovement * 100);
+  }
+
+  /**
+   * Track blink and update history
+   */
+  trackBlink(isCurrentlyBlinking: boolean): void {
+    const now = Date.now();
+
+    // Detect blink transition (not blinking -> blinking)
+    if (isCurrentlyBlinking && !this.wasBlinking) {
+      this.blinkHistory.push(now);
+
+      // Keep only blinks from the last 60 seconds
+      const oneMinuteAgo = now - 60000;
+      this.blinkHistory = this.blinkHistory.filter((t) => t > oneMinuteAgo);
+    }
+
+    this.wasBlinking = isCurrentlyBlinking;
+  }
+
+  /**
+   * Get blink rate (blinks per minute)
+   */
+  getBlinkRate(): number {
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+    const recentBlinks = this.blinkHistory.filter((t) => t > oneMinuteAgo);
+    return recentBlinks.length;
+  }
+
+  /**
+   * Track eye closure duration
+   */
+  trackEyeClosure(areEyesClosed: boolean): void {
+    const now = Date.now();
+
+    if (areEyesClosed) {
+      if (this.eyeClosureStartTime === null) {
+        this.eyeClosureStartTime = now;
+      }
+      this.eyeClosureDuration = (now - this.eyeClosureStartTime) / 1000;
+    } else {
+      this.eyeClosureStartTime = null;
+      this.eyeClosureDuration = 0;
+    }
+  }
+
+  /**
+   * Get current eye closure duration in seconds
+   */
+  getEyeClosureDuration(): number {
+    return this.eyeClosureDuration;
+  }
+
+  /**
+   * Check if eyes have been closed for extended period
+   */
+  isEyesClosedExtended(): boolean {
+    return this.eyeClosureDuration > this.thresholds.eyesClosedExtendedSeconds;
+  }
+
+  /**
+   * Check if blink rate is excessive
+   */
+  isExcessiveBlinking(): boolean {
+    return this.getBlinkRate() > this.thresholds.excessiveBlinkingPerMinute;
+  }
+
+  /**
+   * Track head movement
+   */
+  trackHeadMovement(headPose: HeadPoseMetrics): void {
+    const now = Date.now();
+
+    // Add current pose to history
+    this.headPoseHistory.push({
+      yaw: headPose.yaw,
+      pitch: headPose.pitch,
+      timestamp: now,
+    });
+
+    // Remove old entries outside the time window
+    const cutoff = now - this.HEAD_MOVEMENT_WINDOW_MS;
+    this.headPoseHistory = this.headPoseHistory.filter(
+      (p) => p.timestamp > cutoff
+    );
+  }
+
+  /**
+   * Count significant head movements in the time window
+   */
+  getHeadMovementCount(): number {
+    if (this.headPoseHistory.length < 2) return 0;
+
+    let movementCount = 0;
+    for (let i = 1; i < this.headPoseHistory.length; i++) {
+      const prev = this.headPoseHistory[i - 1];
+      const curr = this.headPoseHistory[i];
+
+      const yawDiff = Math.abs(curr.yaw - prev.yaw);
+      const pitchDiff = Math.abs(curr.pitch - prev.pitch);
+
+      if (
+        yawDiff > this.HEAD_MOVEMENT_THRESHOLD_DEGREES ||
+        pitchDiff > this.HEAD_MOVEMENT_THRESHOLD_DEGREES
+      ) {
+        movementCount++;
+      }
+    }
+
+    return movementCount;
+  }
+
+  /**
+   * Reset all tracking state
+   */
+  resetTracking(): void {
+    this.blinkHistory = [];
+    this.wasBlinking = false;
+    this.eyeClosureStartTime = null;
+    this.eyeClosureDuration = 0;
+    this.headPoseHistory = [];
+  }
+
+  /**
    * Parse MediaPipe result into structured tracking data
    */
   private parseResult(result: FaceLandmarkerResult): FaceTrackingData {
     const timestamp = Date.now();
+    const faceCount = result.faceBlendshapes?.length || 0;
 
     // No face detected
     if (
@@ -171,10 +473,10 @@ export class FaceTrackingService {
       result.faceBlendshapes.length === 0 ||
       !result.faceBlendshapes[0].categories
     ) {
-      return this.createEmptyResult(timestamp);
+      return this.createEmptyResult(timestamp, faceCount);
     }
 
-    // Convert blendshapes array to map for easy lookup
+    // Convert blendshapes array to map for easy lookup (first face)
     const blendshapes = this.blendshapesToMap(
       result.faceBlendshapes[0].categories
     );
@@ -185,11 +487,40 @@ export class FaceTrackingService {
     const headPose = this.extractHeadPose(result);
     const attentionLevel = this.calculateAttentionLevel(eyes, headPose);
 
+    // Track blink
+    this.trackBlink(eyes.isBlinking);
+
+    // Track eye closure
+    const areEyesClosed =
+      eyes.leftEyeOpenness < 20 && eyes.rightEyeOpenness < 20;
+    this.trackEyeClosure(areEyesClosed && !eyes.isBlinking);
+
+    // Track head movement
+    this.trackHeadMovement(headPose);
+
     return {
       timestamp,
       faceDetected: true,
-      eyes,
-      expression,
+      faceCount,
+      eyes: {
+        ...eyes,
+        leftSquint: Math.round(
+          (blendshapes[BLENDSHAPES.eyeSquintLeft] || 0) * 100
+        ),
+        rightSquint: Math.round(
+          (blendshapes[BLENDSHAPES.eyeSquintRight] || 0) * 100
+        ),
+      },
+      expression: {
+        ...expression,
+        browDown: Math.round(
+          (((blendshapes[BLENDSHAPES.browDownLeft] || 0) +
+            (blendshapes[BLENDSHAPES.browDownRight] || 0)) /
+            2) *
+            100
+        ),
+        lipMovement: this.calculateLipMovement(blendshapes),
+      },
       headPose,
       attentionLevel,
       rawBlendshapes: blendshapes,
@@ -452,10 +783,14 @@ export class FaceTrackingService {
   /**
    * Create an empty result when no face is detected
    */
-  private createEmptyResult(timestamp: number): FaceTrackingData {
+  private createEmptyResult(
+    timestamp: number,
+    faceCount = 0
+  ): FaceTrackingData {
     return {
       timestamp,
       faceDetected: false,
+      faceCount,
       eyes: {
         leftEyeOpenness: 0,
         rightEyeOpenness: 0,
@@ -509,6 +844,7 @@ export class FaceTrackingService {
       this.faceLandmarker = null;
     }
     this.isInitialized = false;
+    this.resetTracking();
     console.log('[FaceTracking] Service destroyed');
   }
 }
