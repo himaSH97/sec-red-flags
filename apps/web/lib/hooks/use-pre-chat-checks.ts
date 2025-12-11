@@ -53,7 +53,7 @@ const INITIAL_ITEMS: ChecklistItem[] = [
   {
     id: 'screen-share',
     label: 'Screen Share',
-    description: 'Share your screen for session monitoring',
+    description: 'Share your entire screen for session monitoring',
     status: 'pending',
   },
 ];
@@ -196,6 +196,7 @@ export function usePreChatChecks(): PreChatChecksResult {
 
   /**
    * Check for screen share permission
+   * Requires sharing the entire screen (not a window or tab)
    */
   const checkScreenShare = useCallback(async (): Promise<boolean> => {
     updateItem('screen-share', {
@@ -212,7 +213,11 @@ export function usePreChatChecks(): PreChatChecksResult {
         error instanceof Error ? error.message : 'Unknown error';
 
       let userMessage = 'Screen sharing was cancelled';
-      if (
+
+      // Check for invalid surface type (window or tab instead of full screen)
+      if (errorMessage.includes('INVALID_SURFACE:')) {
+        userMessage = errorMessage.replace('INVALID_SURFACE:', '');
+      } else if (
         errorMessage.includes('NotAllowedError') ||
         errorMessage.includes('Permission denied')
       ) {
@@ -220,7 +225,7 @@ export function usePreChatChecks(): PreChatChecksResult {
           'Screen sharing permission denied. Please allow screen sharing to continue.';
       } else if (errorMessage.includes('AbortError')) {
         userMessage =
-          'Screen sharing was cancelled. Please select a screen to share.';
+          'Screen sharing was cancelled. Please select your entire screen to share.';
       }
 
       updateItem('screen-share', {

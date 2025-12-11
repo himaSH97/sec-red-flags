@@ -9,7 +9,7 @@ class ScreenShareService {
 
   /**
    * Start screen sharing
-   * Prompts user to select a screen/window to share
+   * Prompts user to select a screen to share (entire screen only, not windows or tabs)
    */
   async startSharing(): Promise<MediaStream> {
     // Stop any existing stream first
@@ -23,6 +23,36 @@ class ScreenShareService {
         audio: false,
       });
 
+      // Validate that the user shared an entire screen, not a window or tab
+      const videoTrack = this.stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const settings = videoTrack.getSettings();
+        const displaySurface = settings.displaySurface;
+
+        console.log(
+          '[ScreenShareService] Display surface type:',
+          displaySurface
+        );
+
+        // Check if user shared something other than the full screen
+        if (displaySurface && displaySurface !== 'monitor') {
+          // Stop the invalid stream
+          this.stream.getTracks().forEach((track) => track.stop());
+          this.stream = null;
+
+          const surfaceType =
+            displaySurface === 'window'
+              ? 'a window'
+              : displaySurface === 'browser'
+              ? 'a browser tab'
+              : displaySurface;
+
+          throw new Error(
+            `INVALID_SURFACE:You selected ${surfaceType}. Please share your entire screen instead.`
+          );
+        }
+      }
+
       // Listen for when user stops sharing via browser UI
       this.stream.getVideoTracks().forEach((track) => {
         track.onended = () => {
@@ -32,7 +62,7 @@ class ScreenShareService {
         };
       });
 
-      console.log('[ScreenShareService] Screen sharing started');
+      console.log('[ScreenShareService] Screen sharing started (full screen)');
       return this.stream;
     } catch (error) {
       console.error(
