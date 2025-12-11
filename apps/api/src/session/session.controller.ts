@@ -107,9 +107,19 @@ export class SessionController {
       downloadUrl: `/api/sessions/${sessionId}/video/${chunk.index}`,
     }));
 
-    // Calculate total duration (each chunk is ~30 seconds)
+    // Calculate total duration from actual timestamps, fallback to chunk estimation
     const chunkDurationMs = 30000;
-    const totalDurationMs = chunks.length * chunkDurationMs;
+    let totalDurationMs: number;
+
+    if (session.videoStartedAt && session.videoEndedAt) {
+      // Use actual recorded duration
+      totalDurationMs =
+        new Date(session.videoEndedAt).getTime() -
+        new Date(session.videoStartedAt).getTime();
+    } else {
+      // Fallback to chunk-based estimation
+      totalDurationMs = chunks.length * chunkDurationMs;
+    }
 
     return {
       sessionId,
