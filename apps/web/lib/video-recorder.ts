@@ -70,6 +70,11 @@ class VideoRecorderService {
   private chunkTimer: NodeJS.Timeout | null = null;
   private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 
+  // Track final chunk handling
+  private awaitingFinalChunk = false;
+  private mediaRecorderStopped = false;
+  private finalChunkResolver: (() => void) | null = null;
+
   /**
    * Initialize the video recorder with configuration and callbacks
    */
@@ -138,7 +143,12 @@ class VideoRecorderService {
       // Handle stop
       this.mediaRecorder.onstop = () => {
         console.log('[VideoRecorder] MediaRecorder stopped');
-        this.setStatus('stopped');
+        this.mediaRecorderStopped = true;
+        // Only transition to 'stopped' if we're not waiting for final chunk
+        // or if the final chunk has already been processed
+        if (!this.awaitingFinalChunk) {
+          this.setStatus('stopped');
+        }
       };
 
       // Start recording
@@ -176,6 +186,9 @@ class VideoRecorderService {
 
     // Request final data and stop
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      // Mark that we're expecting a final chunk from requestData()
+      this.awaitingFinalChunk = true;
+      this.mediaRecorderStopped = false;
       this.mediaRecorder.requestData();
       this.mediaRecorder.stop();
     }
@@ -211,6 +224,8 @@ class VideoRecorderService {
       return;
     }
 
+    const isFinalChunk = this.status === 'stopping';
+
     const chunk: VideoChunk = {
       index: this.currentChunkIndex,
       blob,
@@ -219,7 +234,7 @@ class VideoRecorderService {
     };
 
     console.log(
-      `[VideoRecorder] Chunk ${chunk.index} ready, size: ${blob.size} bytes`
+      `[VideoRecorder] Chunk ${chunk.index} ready, size: ${blob.size} bytes${isFinalChunk ? ' (final chunk)' : ''}`
     );
 
     this.chunks.set(chunk.index, chunk);
@@ -228,14 +243,31 @@ class VideoRecorderService {
 
     // Request presigned URL from server
     this.requestUploadUrl(chunk.index);
+
+    // If this was the final chunk, clear the awaiting flag and transition to stopped if MediaRecorder already stopped
+    if (isFinalChunk) {
+      console.log('[VideoRecorder] Final chunk received and queued for upload');
+      this.awaitingFinalChunk = false;
+      
+      // Resolve the waiting promise so waitForPendingUploads can proceed
+      if (this.finalChunkResolver) {
+        this.finalChunkResolver();
+        this.finalChunkResolver = null;
+      }
+      
+      if (this.mediaRecorderStopped) {
+        console.log('[VideoRecorder] Final chunk processed, transitioning to stopped');
+        this.setStatus('stopped');
+      }
+    }
   }
 
   /**
    * Request a presigned URL for uploading a chunk
    */
   private requestUploadUrl(chunkIndex: number): void {
-    // Don't request if we're stopping or stopped
-    if (this.status === 'stopping' || this.status === 'stopped' || this.status === 'idle') {
+    // Don't request if we're stopped or idle (but allow 'stopping' for final chunk)
+    if (this.status === 'stopped' || this.status === 'idle') {
       console.log(`[VideoRecorder] Skipping URL request for chunk ${chunkIndex} - status: ${this.status}`);
       return;
     }
@@ -408,6 +440,71 @@ class VideoRecorderService {
   }
 
   /**
+   * Wait for final chunk to be received (used during stop)
+   */
+  private waitForFinalChunk(timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      // If we're not awaiting a final chunk, resolve immediately
+      if (!this.awaitingFinalChunk) {
+        console.log('[VideoRecorder] No final chunk to wait for');
+        resolve();
+        return;
+      }
+
+      console.log('[VideoRecorder] Waiting for final chunk to arrive...');
+      
+      // Set up resolver to be called when final chunk is processed
+      this.finalChunkResolver = resolve;
+
+      // Set timeout
+      setTimeout(() => {
+        if (this.finalChunkResolver === resolve) {
+          console.warn('[VideoRecorder] Timeout waiting for final chunk');
+          this.finalChunkResolver = null;
+          resolve();
+        }
+      }, timeoutMs);
+    });
+  }
+
+  /**
+   * Wait for all pending uploads to complete
+   * Returns a promise that resolves when all chunks are uploaded or timeout is reached
+   */
+  async waitForPendingUploads(timeoutMs: number = 10000): Promise<void> {
+    const startTime = Date.now();
+
+    // First, wait for the final chunk to be received (if we're stopping)
+    await this.waitForFinalChunk(timeoutMs);
+
+    const remainingTime = Math.max(0, timeoutMs - (Date.now() - startTime));
+
+    // Then wait for all pending uploads to complete
+    return new Promise((resolve) => {
+      const checkPending = () => {
+        // All uploads complete
+        if (this.pendingUploads.size === 0) {
+          console.log('[VideoRecorder] All pending uploads completed');
+          resolve();
+          return;
+        }
+        
+        // Timeout reached
+        if (Date.now() - startTime > timeoutMs) {
+          console.warn(`[VideoRecorder] Timeout waiting for ${this.pendingUploads.size} pending uploads`);
+          resolve();
+          return;
+        }
+        
+        // Check again in 100ms
+        setTimeout(checkPending, 100);
+      };
+      
+      checkPending();
+    });
+  }
+
+  /**
    * Get total chunk count
    */
   getTotalChunkCount(): number {
@@ -457,6 +554,9 @@ class VideoRecorderService {
     this.pendingUploads.clear();
     this.urlResponses.clear();
     this.callbacks = null;
+    this.awaitingFinalChunk = false;
+    this.mediaRecorderStopped = false;
+    this.finalChunkResolver = null;
 
     console.log('[VideoRecorder] Destroyed');
   }

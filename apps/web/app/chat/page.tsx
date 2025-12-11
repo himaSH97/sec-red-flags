@@ -237,17 +237,21 @@ export default function ChatPage() {
   }, []);
 
   // End session - cleanup and redirect to session page
-  const endSession = useCallback(() => {
+  const endSession = useCallback(async () => {
     console.log('[ChatPage] Ending session...');
 
     // Mark as intentional cleanup
     isCleaningUpRef.current = true;
 
-    // Stop video recording
+    // Stop video recording and wait for final chunk to upload
     if (videoRecorderService.getStatus() === 'recording') {
       console.log('[ChatPage] Stopping video recording...');
       videoRecorderService.stop();
       socketService.sendVideoStop();
+      
+      // Wait for pending uploads (including the final partial chunk) with a 10 second timeout
+      console.log('[ChatPage] Waiting for pending video uploads...');
+      await videoRecorderService.waitForPendingUploads(10000);
     }
     videoRecorderService.destroy();
 
