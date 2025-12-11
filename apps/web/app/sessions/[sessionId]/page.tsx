@@ -6,7 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SessionTimeline } from '@/components/ui/session-timeline';
-import { sessionApi, Session, SessionEvent, TypingAnalysis } from '@/lib/api';
+import { VideoPlayer, VideoPlayerRef } from '@/components/ui/video-player';
+import {
+  sessionApi,
+  Session,
+  SessionEvent,
+  TypingAnalysis,
+  VideoChunksResponse,
+} from '@/lib/api';
 import {
   getEventSeverity,
   getSeverityColors,
@@ -35,6 +42,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Video,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -60,48 +68,129 @@ const formatTime = (dateStr: string) => {
 
 // Event type to icon/color mapping
 const getEventStyle = (type: string) => {
-  const styles: Record<string, { icon: typeof Activity; color: string; bg: string }> = {
+  const styles: Record<
+    string,
+    { icon: typeof Activity; color: string; bg: string }
+  > = {
     // Face detection
     FACE_RECOGNITION: { icon: Eye, color: 'text-blue-600', bg: 'bg-blue-50' },
-    FACE_TURNED_AWAY: { icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50' },
-    FACE_RETURNED: { icon: Eye, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    FACE_NOT_DETECTED: { icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-50' },
-    FACE_DETECTED: { icon: Eye, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    
+    FACE_TURNED_AWAY: {
+      icon: AlertTriangle,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+    FACE_RETURNED: {
+      icon: Eye,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+    FACE_NOT_DETECTED: {
+      icon: AlertTriangle,
+      color: 'text-red-600',
+      bg: 'bg-red-50',
+    },
+    FACE_DETECTED: {
+      icon: Eye,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+
     // Gaze
     GAZE_AWAY: { icon: Eye, color: 'text-amber-600', bg: 'bg-amber-50' },
-    GAZE_RETURNED: { icon: Eye, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    
+    GAZE_RETURNED: {
+      icon: Eye,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+
     // Eyes
-    EYES_CLOSED_EXTENDED: { icon: Eye, color: 'text-amber-600', bg: 'bg-amber-50' },
+    EYES_CLOSED_EXTENDED: {
+      icon: Eye,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
     EYES_OPENED: { icon: Eye, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    EXCESSIVE_BLINKING: { icon: Eye, color: 'text-amber-600', bg: 'bg-amber-50' },
-    SQUINTING_DETECTED: { icon: Eye, color: 'text-amber-600', bg: 'bg-amber-50' },
-    
+    EXCESSIVE_BLINKING: {
+      icon: Eye,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+    SQUINTING_DETECTED: {
+      icon: Eye,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+
     // Speaking
-    SPEAKING_DETECTED: { icon: MessageSquare, color: 'text-amber-600', bg: 'bg-amber-50' },
-    SPEAKING_STOPPED: { icon: MessageSquare, color: 'text-slate-600', bg: 'bg-slate-50' },
-    
+    SPEAKING_DETECTED: {
+      icon: MessageSquare,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+    SPEAKING_STOPPED: {
+      icon: MessageSquare,
+      color: 'text-slate-600',
+      bg: 'bg-slate-50',
+    },
+
     // Head
-    HEAD_MOVEMENT_EXCESSIVE: { icon: Activity, color: 'text-amber-600', bg: 'bg-amber-50' },
+    HEAD_MOVEMENT_EXCESSIVE: {
+      icon: Activity,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
     HEAD_TILTED: { icon: Activity, color: 'text-amber-600', bg: 'bg-amber-50' },
-    HEAD_POSITION_NORMAL: { icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    
+    HEAD_POSITION_NORMAL: {
+      icon: Activity,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+
     // Expression
-    EXPRESSION_CONFUSED: { icon: Activity, color: 'text-amber-600', bg: 'bg-amber-50' },
-    LIP_READING_DETECTED: { icon: MessageSquare, color: 'text-amber-600', bg: 'bg-amber-50' },
-    
+    EXPRESSION_CONFUSED: {
+      icon: Activity,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+    LIP_READING_DETECTED: {
+      icon: MessageSquare,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+
     // Browser
-    TAB_SWITCHED_AWAY: { icon: Monitor, color: 'text-red-600', bg: 'bg-red-50' },
-    TAB_RETURNED: { icon: Monitor, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    TAB_SWITCHED_AWAY: {
+      icon: Monitor,
+      color: 'text-red-600',
+      bg: 'bg-red-50',
+    },
+    TAB_RETURNED: {
+      icon: Monitor,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
     WINDOW_BLUR: { icon: Monitor, color: 'text-amber-600', bg: 'bg-amber-50' },
-    WINDOW_FOCUS: { icon: Monitor, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    
+    WINDOW_FOCUS: {
+      icon: Monitor,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+
     // Multiple faces
-    MULTIPLE_FACES_DETECTED: { icon: Users, color: 'text-red-600', bg: 'bg-red-50' },
+    MULTIPLE_FACES_DETECTED: {
+      icon: Users,
+      color: 'text-red-600',
+      bg: 'bg-red-50',
+    },
   };
-  
-  return styles[type] || { icon: Activity, color: 'text-slate-600', bg: 'bg-slate-50' };
+
+  return (
+    styles[type] || {
+      icon: Activity,
+      color: 'text-slate-600',
+      bg: 'bg-slate-50',
+    }
+  );
 };
 
 // Format event type for display
@@ -116,42 +205,56 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const params = useParams();
   const sessionId = params.sessionId as string;
-  
+
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
-  const [typingAnalysis, setTypingAnalysis] = useState<TypingAnalysis | null>(null);
+  const [typingAnalysis, setTypingAnalysis] = useState<TypingAnalysis | null>(
+    null
+  );
+  const [videoData, setVideoData] = useState<VideoChunksResponse | null>(null);
+  const [currentVideoTime, setCurrentVideoTime] = useState<Date | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<Date | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(true);
   const [filterSeverity, setFilterSeverity] = useState<string | null>(null);
-  
+
   const eventListRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<VideoPlayerRef>(null);
+  const lastTimeUpdateRef = useRef<number>(0);
 
   useEffect(() => {
     const fetchData = async () => {
       if (!sessionId) return;
-      
+
       setIsLoading(true);
       setError(null);
-      
+
       try {
-        const [sessionData, eventsData, analysisData] = await Promise.all([
-          sessionApi.getSession(sessionId),
-          sessionApi.getSessionEvents(sessionId),
-          sessionApi.getTypingAnalysis(sessionId),
-        ]);
-        
+        const [sessionData, eventsData, analysisData, videoChunksData] =
+          await Promise.all([
+            sessionApi.getSession(sessionId),
+            sessionApi.getSessionEvents(sessionId),
+            sessionApi.getTypingAnalysis(sessionId),
+            sessionApi.getVideoChunks(sessionId),
+          ]);
+
         setSession(sessionData);
         // Sort events by timestamp ascending
-        setEvents(eventsData.sort((a, b) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        ));
+        setEvents(
+          eventsData.sort(
+            (a, b) =>
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          )
+        );
         setTypingAnalysis(analysisData);
+        setVideoData(videoChunksData);
       } catch (err) {
         console.error('Failed to fetch session data:', err);
-        setError('Failed to load session data. Make sure the API server is running.');
+        setError(
+          'Failed to load session data. Make sure the API server is running.'
+        );
       } finally {
         setIsLoading(false);
       }
@@ -160,41 +263,58 @@ export default function SessionDetailPage() {
     fetchData();
   }, [sessionId]);
 
-  // Handle time selection from timeline
-  const handleTimeSelect = useCallback((time: Date) => {
-    setSelectedTime(time);
-  }, []);
-
-  // Handle event selection from timeline
-  const handleEventSelect = useCallback((event: SessionEvent) => {
-    setSelectedEventId(event._id);
-    // Scroll to the event in the list
-    setTimeout(() => {
-      const element = document.getElementById(`event-${event._id}`);
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Handle time selection from timeline - seek video to this time
+  const handleTimeSelect = useCallback(
+    (time: Date) => {
+      setSelectedTime(time);
+      // Seek video player to this timestamp
+      if (videoRef.current && videoData?.videoStartedAt) {
+        videoRef.current.seekToTimestamp(time);
       }
-    }, 100);
-  }, []);
+    },
+    [videoData?.videoStartedAt]
+  );
+
+  // Handle event selection from timeline - seek video and scroll to event
+  const handleEventSelect = useCallback(
+    (event: SessionEvent) => {
+      setSelectedEventId(event._id);
+      setSelectedTime(new Date(event.timestamp));
+      // Seek video player to this event's timestamp
+      if (videoRef.current && videoData?.videoStartedAt) {
+        videoRef.current.seekToTimestamp(new Date(event.timestamp));
+      }
+      // Scroll to the event in the list
+      setTimeout(() => {
+        const element = document.getElementById(`event-${event._id}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    },
+    [videoData?.videoStartedAt]
+  );
 
   // Filtered events based on selected time and severity
   const filteredEvents = useMemo(() => {
     let filtered = events;
-    
+
     // Filter by severity if selected
     if (filterSeverity) {
-      filtered = filtered.filter(e => getEventSeverity(e.type) === filterSeverity);
+      filtered = filtered.filter(
+        (e) => getEventSeverity(e.type) === filterSeverity
+      );
     }
-    
+
     // If showing only events near selected time
     if (!showAllEvents && selectedTime) {
       const targetMs = selectedTime.getTime();
-      filtered = filtered.filter(e => {
+      filtered = filtered.filter((e) => {
         const eventMs = new Date(e.timestamp).getTime();
         return Math.abs(eventMs - targetMs) <= 5000; // 5 second window
       });
     }
-    
+
     return filtered;
   }, [events, filterSeverity, showAllEvents, selectedTime]);
 
@@ -215,10 +335,37 @@ export default function SessionDetailPage() {
   }, [events]);
 
   // Handle event click from event list
-  const handleEventListClick = useCallback((event: SessionEvent) => {
-    setSelectedEventId(event._id);
-    setSelectedTime(new Date(event.timestamp));
-  }, []);
+  const handleEventListClick = useCallback(
+    (event: SessionEvent) => {
+      setSelectedEventId(event._id);
+      setSelectedTime(new Date(event.timestamp));
+      // Also seek the video to this event's timestamp
+      if (videoRef.current && videoData?.videoStartedAt) {
+        videoRef.current.seekToTimestamp(new Date(event.timestamp));
+      }
+    },
+    [videoData?.videoStartedAt]
+  );
+
+  // Handle video time update - sync to timeline (throttled to reduce re-renders)
+  const handleVideoTimeUpdate = useCallback(
+    (timeMs: number) => {
+      // Throttle updates to ~250ms intervals to reduce re-renders
+      const now = Date.now();
+      if (now - lastTimeUpdateRef.current < 250) {
+        return;
+      }
+      lastTimeUpdateRef.current = now;
+
+      if (videoData?.videoStartedAt) {
+        const videoStartMs = new Date(videoData.videoStartedAt).getTime();
+        const currentTime = new Date(videoStartMs + timeMs);
+        setCurrentVideoTime(currentTime);
+        // Don't update selectedTime here - it should only change on user interaction
+      }
+    },
+    [videoData?.videoStartedAt]
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-zinc-100">
@@ -249,7 +396,9 @@ export default function SessionDetailPage() {
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="h-10 w-10 animate-spin text-slate-400" />
-            <p className="mt-4 text-sm text-slate-500">Loading session data...</p>
+            <p className="mt-4 text-sm text-slate-500">
+              Loading session data...
+            </p>
           </div>
         ) : error ? (
           <Card className="border-red-200 bg-red-50">
@@ -266,7 +415,7 @@ export default function SessionDetailPage() {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Session Info Card */}
+            {/* Session Info Card - Full width */}
             {session && (
               <Card className="border-slate-200/80 bg-white/80 backdrop-blur-sm">
                 <CardHeader className="pb-4">
@@ -346,14 +495,23 @@ export default function SessionDetailPage() {
                     <div
                       className={cn(
                         'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium',
-                        typingAnalysis.riskLevel === 'low' && 'bg-emerald-100 text-emerald-700',
-                        typingAnalysis.riskLevel === 'medium' && 'bg-amber-100 text-amber-700',
-                        typingAnalysis.riskLevel === 'high' && 'bg-red-100 text-red-700'
+                        typingAnalysis.riskLevel === 'low' &&
+                          'bg-emerald-100 text-emerald-700',
+                        typingAnalysis.riskLevel === 'medium' &&
+                          'bg-amber-100 text-amber-700',
+                        typingAnalysis.riskLevel === 'high' &&
+                          'bg-red-100 text-red-700'
                       )}
                     >
-                      {typingAnalysis.riskLevel === 'low' && <ShieldCheck className="h-4 w-4" />}
-                      {typingAnalysis.riskLevel === 'medium' && <Shield className="h-4 w-4" />}
-                      {typingAnalysis.riskLevel === 'high' && <ShieldAlert className="h-4 w-4" />}
+                      {typingAnalysis.riskLevel === 'low' && (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      {typingAnalysis.riskLevel === 'medium' && (
+                        <Shield className="h-4 w-4" />
+                      )}
+                      {typingAnalysis.riskLevel === 'high' && (
+                        <ShieldAlert className="h-4 w-4" />
+                      )}
                       <span>Risk: {typingAnalysis.riskScore}/100</span>
                     </div>
                   </div>
@@ -392,7 +550,8 @@ export default function SessionDetailPage() {
                           {typingAnalysis.totalKeystrokes.toLocaleString()}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {typingAnalysis.totalCharacters.toLocaleString()} characters
+                          {typingAnalysis.totalCharacters.toLocaleString()}{' '}
+                          characters
                         </p>
                       </div>
                     </div>
@@ -410,7 +569,8 @@ export default function SessionDetailPage() {
                           {typingAnalysis.corrections.correctionRatio}%
                         </p>
                         <p className="text-xs text-slate-500">
-                          {typingAnalysis.corrections.totalCorrections} backspaces
+                          {typingAnalysis.corrections.totalCorrections}{' '}
+                          backspaces
                         </p>
                       </div>
                     </div>
@@ -442,20 +602,27 @@ export default function SessionDetailPage() {
                         Suspicious Patterns Detected
                       </h4>
                       <div className="space-y-2">
-                        {typingAnalysis.suspiciousPatterns.map((pattern, index) => (
-                          <div
-                            key={index}
-                            className={cn(
-                              'flex items-center justify-between px-3 py-2 rounded-lg text-sm',
-                              pattern.severity === 'low' && 'bg-blue-50 text-blue-700',
-                              pattern.severity === 'medium' && 'bg-amber-50 text-amber-700',
-                              pattern.severity === 'high' && 'bg-red-50 text-red-700'
-                            )}
-                          >
-                            <span>{pattern.description}</span>
-                            <span className="font-medium">+{pattern.contribution} pts</span>
-                          </div>
-                        ))}
+                        {typingAnalysis.suspiciousPatterns.map(
+                          (pattern, index) => (
+                            <div
+                              key={index}
+                              className={cn(
+                                'flex items-center justify-between px-3 py-2 rounded-lg text-sm',
+                                pattern.severity === 'low' &&
+                                  'bg-blue-50 text-blue-700',
+                                pattern.severity === 'medium' &&
+                                  'bg-amber-50 text-amber-700',
+                                pattern.severity === 'high' &&
+                                  'bg-red-50 text-red-700'
+                              )}
+                            >
+                              <span>{pattern.description}</span>
+                              <span className="font-medium">
+                                +{pattern.contribution} pts
+                              </span>
+                            </div>
+                          )
+                        )}
                       </div>
                     </div>
                   )}
@@ -477,19 +644,31 @@ export default function SessionDetailPage() {
                           <p className="text-lg font-semibold text-slate-800">
                             {typingAnalysis.bursts.avgBurstSize}
                           </p>
-                          <p className="text-xs text-slate-500">Avg Burst Size</p>
+                          <p className="text-xs text-slate-500">
+                            Avg Burst Size
+                          </p>
                         </div>
-                        <div className={cn(
-                          'text-center p-2 rounded-lg',
-                          typingAnalysis.bursts.burstsAfterLongPause > 3 ? 'bg-amber-50' : 'bg-slate-50'
-                        )}>
-                          <p className={cn(
-                            'text-lg font-semibold',
-                            typingAnalysis.bursts.burstsAfterLongPause > 3 ? 'text-amber-700' : 'text-slate-800'
-                          )}>
+                        <div
+                          className={cn(
+                            'text-center p-2 rounded-lg',
+                            typingAnalysis.bursts.burstsAfterLongPause > 3
+                              ? 'bg-amber-50'
+                              : 'bg-slate-50'
+                          )}
+                        >
+                          <p
+                            className={cn(
+                              'text-lg font-semibold',
+                              typingAnalysis.bursts.burstsAfterLongPause > 3
+                                ? 'text-amber-700'
+                                : 'text-slate-800'
+                            )}
+                          >
                             {typingAnalysis.bursts.burstsAfterLongPause}
                           </p>
-                          <p className="text-xs text-slate-500">After Long Pause</p>
+                          <p className="text-xs text-slate-500">
+                            After Long Pause
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -498,7 +677,61 @@ export default function SessionDetailPage() {
               </Card>
             )}
 
-            {/* Interactive Timeline */}
+            {/* Video Player Card - Full width, positioned above timeline */}
+            {videoData && videoData.chunks.length > 0 && (
+              <Card className="border-slate-200/80 bg-white/80 backdrop-blur-sm">
+                <CardHeader className="pb-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                      <Video className="h-5 w-5" />
+                      Session Recording
+                    </CardTitle>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'px-2 py-1 rounded-full text-xs font-medium',
+                          videoData.videoStatus === 'completed' &&
+                            'bg-emerald-100 text-emerald-700',
+                          videoData.videoStatus === 'recording' &&
+                            'bg-amber-100 text-amber-700',
+                          videoData.videoStatus === 'failed' &&
+                            'bg-red-100 text-red-700',
+                          videoData.videoStatus === 'idle' &&
+                            'bg-slate-100 text-slate-700'
+                        )}
+                      >
+                        {videoData.videoStatus}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {videoData.chunks.length} chunk
+                        {videoData.chunks.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <VideoPlayer
+                    ref={videoRef}
+                    chunks={videoData.chunks}
+                    videoStartTime={
+                      videoData.videoStartedAt
+                        ? new Date(videoData.videoStartedAt)
+                        : undefined
+                    }
+                    totalDurationMs={videoData.totalDurationMs}
+                    chunkDurationMs={videoData.chunkDurationMs}
+                    onTimeUpdate={handleVideoTimeUpdate}
+                  />
+                  {videoData.videoStartedAt && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Recording started: {formatDate(videoData.videoStartedAt)}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Interactive Timeline - synced with video player */}
             {session && events.length > 0 && (
               <SessionTimeline
                 events={events}
@@ -506,6 +739,10 @@ export default function SessionDetailPage() {
                 onTimeSelect={handleTimeSelect}
                 onEventSelect={handleEventSelect}
                 selectedEventId={selectedEventId || undefined}
+                externalCurrentTime={currentVideoTime || undefined}
+                disablePlayback={
+                  videoData?.chunks && videoData.chunks.length > 0
+                }
               />
             )}
 
@@ -519,7 +756,9 @@ export default function SessionDetailPage() {
                     </CardTitle>
                     <div className="flex items-center gap-2">
                       <Filter className="h-4 w-4 text-slate-400" />
-                      <span className="text-xs text-slate-500">Filter by severity:</span>
+                      <span className="text-xs text-slate-500">
+                        Filter by severity:
+                      </span>
                     </div>
                   </div>
                 </CardHeader>
@@ -582,11 +821,15 @@ export default function SessionDetailPage() {
                       Info ({severityCounts.info})
                     </button>
                   </div>
-                  
+
                   {/* Event type badges */}
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(eventCounts)
-                      .filter(([type]) => !filterSeverity || getEventSeverity(type) === filterSeverity)
+                      .filter(
+                        ([type]) =>
+                          !filterSeverity ||
+                          getEventSeverity(type) === filterSeverity
+                      )
                       .sort((a, b) => b[1] - a[1])
                       .map(([type, count]) => {
                         const style = getEventStyle(type);
@@ -633,8 +876,10 @@ export default function SessionDetailPage() {
                       </button>
                     )}
                     <span className="text-sm text-slate-500">
-                      {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''}
-                      {filteredEvents.length !== events.length && ` (filtered from ${events.length})`}
+                      {filteredEvents.length} event
+                      {filteredEvents.length !== 1 ? 's' : ''}
+                      {filteredEvents.length !== events.length &&
+                        ` (filtered from ${events.length})`}
                     </span>
                   </div>
                 </div>
@@ -668,7 +913,7 @@ export default function SessionDetailPage() {
                         const severity = getEventSeverity(event.type);
                         const colors = getSeverityColors(severity);
                         const isSelected = event._id === selectedEventId;
-                        
+
                         return (
                           <div
                             id={`event-${event._id}`}
@@ -689,7 +934,7 @@ export default function SessionDetailPage() {
                             {index < filteredEvents.length - 1 && (
                               <div className="absolute left-7 top-12 bottom-0 w-0.5 bg-slate-100 -mb-3 translate-y-1" />
                             )}
-                            
+
                             <div className="flex items-start gap-3">
                               {/* Icon */}
                               <div
@@ -715,7 +960,11 @@ export default function SessionDetailPage() {
                                   <div className="flex items-center gap-2 shrink-0">
                                     {session && (
                                       <span className="text-xs text-slate-400 font-mono">
-                                        +{formatRelativeTime(event.timestamp, session.createdAt)}
+                                        +
+                                        {formatRelativeTime(
+                                          event.timestamp,
+                                          session.createdAt
+                                        )}
                                       </span>
                                     )}
                                     <span className="flex items-center gap-1 text-xs text-slate-400">
@@ -726,30 +975,35 @@ export default function SessionDetailPage() {
                                 </div>
 
                                 {/* Event Data */}
-                                {event.data && Object.keys(event.data).length > 0 && (
-                                  <div className="mt-2 rounded-md bg-slate-50 p-2.5">
-                                    <div className="grid gap-1.5 text-xs">
-                                      {Object.entries(event.data)
-                                        .filter(([, value]) => value !== undefined && value !== null)
-                                        .slice(0, 5)
-                                        .map(([key, value]) => (
-                                          <div
-                                            key={key}
-                                            className="flex items-baseline gap-2"
-                                          >
-                                            <span className="text-slate-500 shrink-0">
-                                              {key}:
-                                            </span>
-                                            <span className="text-slate-700 font-mono break-all">
-                                              {typeof value === 'object'
-                                                ? JSON.stringify(value)
-                                                : String(value)}
-                                            </span>
-                                          </div>
-                                        ))}
+                                {event.data &&
+                                  Object.keys(event.data).length > 0 && (
+                                    <div className="mt-2 rounded-md bg-slate-50 p-2.5">
+                                      <div className="grid gap-1.5 text-xs">
+                                        {Object.entries(event.data)
+                                          .filter(
+                                            ([, value]) =>
+                                              value !== undefined &&
+                                              value !== null
+                                          )
+                                          .slice(0, 5)
+                                          .map(([key, value]) => (
+                                            <div
+                                              key={key}
+                                              className="flex items-baseline gap-2"
+                                            >
+                                              <span className="text-slate-500 shrink-0">
+                                                {key}:
+                                              </span>
+                                              <span className="text-slate-700 font-mono break-all">
+                                                {typeof value === 'object'
+                                                  ? JSON.stringify(value)
+                                                  : String(value)}
+                                              </span>
+                                            </div>
+                                          ))}
+                                      </div>
                                     </div>
-                                  </div>
-                                )}
+                                  )}
                               </div>
                             </div>
                           </div>

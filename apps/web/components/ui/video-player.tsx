@@ -76,16 +76,28 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
     const [error, setError] = useState<string | null>(null);
     const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
 
-    // Update status helper
-    const updateStatus = useCallback((newStatus: VideoPlayerStatus) => {
-      setStatus(newStatus);
-      onStatusChange?.(newStatus);
-      if (newStatus === 'ready') {
-        onReady?.();
-      }
-    }, [onStatusChange, onReady]);
+    // Use refs to store callbacks to avoid dependency issues
+    const onTimeUpdateRef = useRef(onTimeUpdate);
+    const onStatusChangeRef = useRef(onStatusChange);
+    const onReadyRef = useRef(onReady);
 
-    // Load video when chunks change
+    // Keep refs up to date
+    useEffect(() => {
+      onTimeUpdateRef.current = onTimeUpdate;
+    }, [onTimeUpdate]);
+
+    useEffect(() => {
+      onStatusChangeRef.current = onStatusChange;
+    }, [onStatusChange]);
+
+    useEffect(() => {
+      onReadyRef.current = onReady;
+    }, [onReady]);
+
+    // Track the current video URL to avoid unnecessary reloads
+    const currentUrlRef = useRef<string | null>(null);
+
+    // Load video when chunks change - only depends on chunks
     useEffect(() => {
       if (!videoRef.current || chunks.length === 0) {
         console.log('[VideoPlayer] No video ref or chunks');
@@ -94,14 +106,33 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
       const video = videoRef.current;
       const url = chunks[0].downloadUrl;
-      
-      console.log('[VideoPlayer] Setting video source:', url);
-      updateStatus('loading');
 
-      // Set up event handlers
+      // Only reload if URL actually changed
+      if (currentUrlRef.current === url) {
+        console.log('[VideoPlayer] URL unchanged, skipping reload');
+        return;
+      }
+
+      console.log('[VideoPlayer] Setting video source:', url);
+      currentUrlRef.current = url;
+      setStatus('loading');
+      onStatusChangeRef.current?.('loading');
+
+      // Set the source and load
+      video.src = url;
+      video.load();
+    }, [chunks]);
+
+    // Set up event listeners - runs once on mount
+    useEffect(() => {
+      const video = videoRef.current;
+      if (!video) return;
+
       const handleLoadedData = () => {
         console.log('[VideoPlayer] Video loaded successfully');
-        updateStatus('ready');
+        setStatus('ready');
+        onStatusChangeRef.current?.('ready');
+        onReadyRef.current?.();
         if (video.duration) {
           setDurationMs(video.duration * 1000);
         }
@@ -109,25 +140,38 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
       const handleCanPlay = () => {
         console.log('[VideoPlayer] Video can play');
-        if (status === 'loading') {
-          updateStatus('ready');
-        }
+        setStatus((prev) => {
+          if (prev === 'loading') {
+            onStatusChangeRef.current?.('ready');
+            onReadyRef.current?.();
+            return 'ready';
+          }
+          return prev;
+        });
       };
 
       const handleError = () => {
         console.error('[VideoPlayer] Video error:', video.error);
         setError(video.error?.message || 'Failed to load video');
-        updateStatus('error');
+        setStatus('error');
+        onStatusChangeRef.current?.('error');
       };
 
       const handleTimeUpdate = () => {
         const timeMs = video.currentTime * 1000;
         setCurrentTimeMs(timeMs);
-        onTimeUpdate?.(timeMs);
+        onTimeUpdateRef.current?.(timeMs);
       };
 
-      const handlePlay = () => updateStatus('playing');
-      const handlePause = () => updateStatus('paused');
+      const handlePlay = () => {
+        setStatus('playing');
+        onStatusChangeRef.current?.('playing');
+      };
+
+      const handlePause = () => {
+        setStatus('paused');
+        onStatusChangeRef.current?.('paused');
+      };
 
       video.addEventListener('loadeddata', handleLoadedData);
       video.addEventListener('canplay', handleCanPlay);
@@ -135,10 +179,6 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
       video.addEventListener('timeupdate', handleTimeUpdate);
       video.addEventListener('play', handlePlay);
       video.addEventListener('pause', handlePause);
-
-      // Set the source
-      video.src = url;
-      video.load();
 
       return () => {
         video.removeEventListener('loadeddata', handleLoadedData);
@@ -148,7 +188,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
         video.removeEventListener('play', handlePlay);
         video.removeEventListener('pause', handlePause);
       };
-    }, [chunks, updateStatus, onTimeUpdate, status]);
+    }, []); // Empty deps - listeners stay stable
 
     // Expose methods via ref
     useImperativeHandle(
@@ -159,8 +199,11 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
             // Calculate which chunk this time falls into
             const chunkIndex = Math.floor(timeMs / chunkDurationMs);
             const timeWithinChunk = timeMs % chunkDurationMs;
-            
-            if (chunkIndex !== currentChunkIndex && chunkIndex < chunks.length) {
+
+            if (
+              chunkIndex !== currentChunkIndex &&
+              chunkIndex < chunks.length
+            ) {
               // Need to load a different chunk
               setCurrentChunkIndex(chunkIndex);
               videoRef.current.src = chunks[chunkIndex].downloadUrl;
@@ -189,7 +232,9 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
           return (videoRef.current?.currentTime || 0) * 1000;
         },
         isReady: () => {
-          return status === 'ready' || status === 'playing' || status === 'paused';
+          return (
+            status === 'ready' || status === 'playing' || status === 'paused'
+          );
         },
       }),
       [chunkDurationMs, chunks, currentChunkIndex, status, videoStartTime]
@@ -249,7 +294,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
         const rect = e.currentTarget.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
-        const targetTime = percent * durationMs / 1000;
+        const targetTime = (percent * durationMs) / 1000;
         videoRef.current.currentTime = targetTime;
       },
       [durationMs]
@@ -282,12 +327,16 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
       document.addEventListener('fullscreenchange', handleFullscreenChange);
       return () => {
-        document.removeEventListener('fullscreenchange', handleFullscreenChange);
+        document.removeEventListener(
+          'fullscreenchange',
+          handleFullscreenChange
+        );
       };
     }, []);
 
     // Progress percentage
-    const progressPercent = durationMs > 0 ? (currentTimeMs / durationMs) * 100 : 0;
+    const progressPercent =
+      durationMs > 0 ? (currentTimeMs / durationMs) * 100 : 0;
 
     // Render empty state if no chunks
     if (chunks.length === 0) {
@@ -336,7 +385,9 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
             <AlertCircle className="h-10 w-10 text-red-500 mb-3" />
             <p className="text-white text-sm mb-1">Failed to load video</p>
-            <p className="text-slate-400 text-xs text-center max-w-md">{error || 'Unknown error'}</p>
+            <p className="text-slate-400 text-xs text-center max-w-md">
+              {error || 'Unknown error'}
+            </p>
           </div>
         )}
 
