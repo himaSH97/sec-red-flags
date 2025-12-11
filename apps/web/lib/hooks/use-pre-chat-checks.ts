@@ -383,8 +383,8 @@ export function usePreChatChecks(
 
     // Check 1: Single display (if enabled)
     if (cfg.multiDisplayCheckEnabled !== false) {
-      const displayPassed = await checkSingleDisplay();
-      await new Promise((r) => setTimeout(r, 300));
+    const displayPassed = await checkSingleDisplay();
+    await new Promise((r) => setTimeout(r, 300));
       if (!displayPassed) {
         setIsChecking(false);
         isRunningRef.current = false;
