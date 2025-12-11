@@ -364,6 +364,9 @@ export function PreChatChecklist({
   const hasStartedChecksRef = useRef(false);
   const prevOpenRef = useRef(open);
 
+  // Check if there are no checks to run (all toggles disabled)
+  const noChecksNeeded = items.length === 0;
+
   // Run checks when modal opens (only once per open)
   useEffect(() => {
     // Detect when modal opens (transition from closed to open)
@@ -374,6 +377,15 @@ export function PreChatChecklist({
 
     if (open && !hasStartedChecksRef.current) {
       hasStartedChecksRef.current = true;
+
+      // If no checks needed, auto-complete after a brief delay
+      if (noChecksNeeded) {
+        const timer = setTimeout(() => {
+          onComplete(null, null);
+        }, 500);
+        return () => clearTimeout(timer);
+      }
+
       // Small delay for modal animation
       const timer = setTimeout(() => {
         runAllChecks();
@@ -386,7 +398,7 @@ export function PreChatChecklist({
       hasStartedChecksRef.current = false;
       resetChecks();
     }
-  }, [open]); // Only depend on `open` - functions are stable via refs in the hook
+  }, [open, noChecksNeeded, onComplete]); // Only depend on `open` - functions are stable via refs in the hook
 
   // Handle continue
   const handleContinue = useCallback(() => {
@@ -420,35 +432,48 @@ export function PreChatChecklist({
             Pre-Session Checklist
           </DialogTitle>
           <DialogDescription>
-            Please complete these requirements before starting your session.
+            {noChecksNeeded
+              ? 'No pre-session checks are required. Starting your session...'
+              : 'Please complete these requirements before starting your session.'}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Progress */}
-        <div className="py-2">
-          <ProgressIndicator items={items} />
-        </div>
+        {/* Progress - only show if there are checks */}
+        {!noChecksNeeded && (
+          <div className="py-2">
+            <ProgressIndicator items={items} />
+          </div>
+        )}
 
         {/* Checklist items */}
-        <div className="space-y-3 py-2">
-          {regularItems.map((item, index) => (
-            <ChecklistItemRow
-              key={item.id}
-              item={item}
-              index={index}
-              onRetry={retryCheck}
-              isChecking={isChecking}
-            />
-          ))}
+        {!noChecksNeeded && (
+          <div className="space-y-3 py-2">
+            {regularItems.map((item, index) => (
+              <ChecklistItemRow
+                key={item.id}
+                item={item}
+                index={index}
+                onRetry={retryCheck}
+                isChecking={isChecking}
+              />
+            ))}
 
-          {/* Face capture panel - shown when awaiting capture */}
-          {isAwaitingCapture && (
-            <FaceCapturePanel
-              cameraStream={cameraStream}
-              onCapture={completeFaceCapture}
-            />
-          )}
-        </div>
+            {/* Face capture panel - shown when awaiting capture */}
+            {isAwaitingCapture && (
+              <FaceCapturePanel
+                cameraStream={cameraStream}
+                onCapture={completeFaceCapture}
+              />
+            )}
+          </div>
+        )}
+
+        {/* No checks needed message */}
+        {noChecksNeeded && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+          </div>
+        )}
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   checkMultipleDisplays,
   isDisplayCheckSupported,
@@ -143,6 +143,17 @@ export function usePreChatChecks(
   // Store config in ref to use in callbacks
   const configRef = useRef(config);
   configRef.current = config;
+
+  // Track if checks have started to prevent resetting completed items
+  const hasStartedRef = useRef(false);
+
+  // Update items when config changes (only before checks have started)
+  useEffect(() => {
+    // Only sync items if we haven't started checking yet
+    if (!hasStartedRef.current) {
+      setItems(initialItems);
+    }
+  }, [initialItems]);
 
   // Track if checks are running to prevent concurrent runs
   const isRunningRef = useRef(false);
@@ -365,6 +376,7 @@ export function usePreChatChecks(
   const runAllChecks = useCallback(async () => {
     if (isRunningRef.current) return;
     isRunningRef.current = true;
+    hasStartedRef.current = true;
     setIsChecking(true);
 
     const cfg = configRef.current;
@@ -478,6 +490,9 @@ export function usePreChatChecks(
       faceCaptureResolveRef.current(false);
       faceCaptureResolveRef.current = null;
     }
+
+    // Reset the started flag so config changes can update items again
+    hasStartedRef.current = false;
 
     setItems(getInitialItems(configRef.current));
     setDisplayCheckResult(null);

@@ -15,8 +15,10 @@ class ScreenShareService {
     // Stop any existing stream first
     this.stopSharing();
 
+    let tempStream: MediaStream | null = null;
+
     try {
-      this.stream = await navigator.mediaDevices.getDisplayMedia({
+      tempStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'monitor',
         },
@@ -24,7 +26,7 @@ class ScreenShareService {
       });
 
       // Validate that the user shared an entire screen, not a window or tab
-      const videoTrack = this.stream.getVideoTracks()[0];
+      const videoTrack = tempStream.getVideoTracks()[0];
       if (videoTrack) {
         const settings = videoTrack.getSettings();
         const displaySurface = settings.displaySurface;
@@ -34,24 +36,36 @@ class ScreenShareService {
           displaySurface
         );
 
-        // Check if user shared something other than the full screen
-        if (displaySurface && displaySurface !== 'monitor') {
-          // Stop the invalid stream
-          this.stream.getTracks().forEach((track) => track.stop());
-          this.stream = null;
+        // Reject if user shared something other than the full screen
+        // Also reject if displaySurface is undefined (can't verify it's a monitor)
+        if (displaySurface !== 'monitor') {
+          // Immediately stop the invalid stream
+          tempStream.getTracks().forEach((track) => {
+            track.stop();
+            console.log(
+              '[ScreenShareService] Stopped invalid track:',
+              track.kind
+            );
+          });
+          tempStream = null;
 
-          const surfaceType =
-            displaySurface === 'window'
-              ? 'a window'
-              : displaySurface === 'browser'
-              ? 'a browser tab'
-              : displaySurface;
+          let surfaceType = 'an unknown source';
+          if (displaySurface === 'window') {
+            surfaceType = 'a window';
+          } else if (displaySurface === 'browser') {
+            surfaceType = 'a browser tab';
+          } else if (displaySurface) {
+            surfaceType = displaySurface;
+          }
 
           throw new Error(
             `INVALID_SURFACE:You selected ${surfaceType}. Please share your entire screen instead.`
           );
         }
       }
+
+      // Validation passed - store the stream
+      this.stream = tempStream;
 
       // Listen for when user stops sharing via browser UI
       this.stream.getVideoTracks().forEach((track) => {
@@ -65,6 +79,15 @@ class ScreenShareService {
       console.log('[ScreenShareService] Screen sharing started (full screen)');
       return this.stream;
     } catch (error) {
+      // Ensure stream is stopped if any error occurs
+      if (tempStream) {
+        tempStream.getTracks().forEach((track) => {
+          track.stop();
+          console.log('[ScreenShareService] Cleanup: stopped track on error');
+        });
+      }
+      this.stream = null;
+
       console.error(
         '[ScreenShareService] Failed to start screen sharing:',
         error
