@@ -1,19 +1,32 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { CameraModal } from '@/components/camera-modal';
+import { PreChatChecklist } from '@/components/ui/pre-chat-checklist';
 import { socketService } from '@/lib/socket';
 import { adminApi } from '@/lib/api';
-import { MessageSquare, Shield, Zap, List, Settings, Loader2 } from 'lucide-react';
+import {
+  MessageSquare,
+  Shield,
+  Zap,
+  List,
+  Settings,
+  Loader2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Home() {
   const router = useRouter();
   const [showCameraModal, setShowCameraModal] = useState(false);
-  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<boolean | null>(null);
+  const [showChecklist, setShowChecklist] = useState(false);
+  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<
+    boolean | null
+  >(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [cameraStreamFromChecklist, setCameraStreamFromChecklist] =
+    useState<MediaStream | null>(null);
 
   // Fetch config on mount
   useEffect(() => {
@@ -30,14 +43,33 @@ export default function Home() {
     loadConfig();
   }, []);
 
+  // Cleanup camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStreamFromChecklist) {
+        cameraStreamFromChecklist.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [cameraStreamFromChecklist]);
+
   const handleStartChat = () => {
-    console.log('Starting chat...');
-    
+    console.log('Starting chat - showing pre-chat checklist...');
+    // Show the pre-chat checklist first
+    setShowChecklist(true);
+  };
+
+  const handleChecklistComplete = (cameraStream: MediaStream | null) => {
+    console.log('Pre-chat checks passed, proceeding...');
+    setShowChecklist(false);
+
+    // Store the camera stream for later use
+    setCameraStreamFromChecklist(cameraStream);
+
     // If face recognition is disabled, go directly to chat
     if (faceRecognitionEnabled === false) {
       setIsLoading(true);
       toast.success('Starting chat...', {
-        description: 'Face verification is disabled',
+        description: 'All checks passed!',
         duration: 2000,
       });
       // Clear any existing reference face
@@ -47,7 +79,8 @@ export default function Home() {
       router.push('/chat');
       return;
     }
-    
+
+    // Show camera modal for face capture
     setShowCameraModal(true);
   };
 
@@ -178,11 +211,19 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Pre-Chat Checklist Modal */}
+      <PreChatChecklist
+        open={showChecklist}
+        onOpenChange={setShowChecklist}
+        onComplete={handleChecklistComplete}
+      />
+
       {/* Camera Modal */}
       <CameraModal
         open={showCameraModal}
         onOpenChange={setShowCameraModal}
         onCapture={handleFaceCapture}
+        existingStream={cameraStreamFromChecklist}
       />
     </main>
   );

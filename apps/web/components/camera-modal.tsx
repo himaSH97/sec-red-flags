@@ -16,11 +16,18 @@ interface CameraModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCapture: (imageBase64: string) => void;
+  /** Optional existing camera stream to reuse (e.g., from pre-chat checklist) */
+  existingStream?: MediaStream | null;
 }
 
 type CameraState = 'idle' | 'requesting' | 'active' | 'captured' | 'error';
 
-export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps) {
+export function CameraModal({
+  open,
+  onOpenChange,
+  onCapture,
+  existingStream,
+}: CameraModalProps) {
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -28,20 +35,29 @@ export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps)
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Start camera stream
+  // Start camera stream (reuse existing if provided)
   const startCamera = useCallback(async () => {
     setCameraState('requesting');
     setErrorMessage('');
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+      let stream: MediaStream;
+
+      // Check if we can reuse an existing stream
+      if (existingStream && existingStream.active) {
+        console.log('Reusing existing camera stream from checklist');
+        stream = existingStream;
+      } else {
+        // Request a new stream
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
+        });
+      }
 
       streamRef.current = stream;
 
@@ -53,12 +69,16 @@ export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps)
     } catch (error) {
       console.error('Camera error:', error);
       setCameraState('error');
-      
+
       if (error instanceof DOMException) {
         if (error.name === 'NotAllowedError') {
-          setErrorMessage('Camera access denied. Please allow camera access to continue.');
+          setErrorMessage(
+            'Camera access denied. Please allow camera access to continue.'
+          );
         } else if (error.name === 'NotFoundError') {
-          setErrorMessage('No camera found. Please connect a camera and try again.');
+          setErrorMessage(
+            'No camera found. Please connect a camera and try again.'
+          );
         } else {
           setErrorMessage('Failed to access camera. Please try again.');
         }
@@ -66,7 +86,7 @@ export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps)
         setErrorMessage('An unexpected error occurred.');
       }
     }
-  }, []);
+  }, [existingStream]);
 
   // Stop camera stream
   const stopCamera = useCallback(() => {
@@ -141,7 +161,8 @@ export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps)
             Face Verification
           </DialogTitle>
           <DialogDescription>
-            We need to capture your face for security verification during the chat session.
+            We need to capture your face for security verification during the
+            chat session.
           </DialogDescription>
         </DialogHeader>
 
@@ -245,4 +266,3 @@ export function CameraModal({ open, onOpenChange, onCapture }: CameraModalProps)
     </Dialog>
   );
 }
-

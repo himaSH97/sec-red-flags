@@ -32,6 +32,11 @@ export enum ClientEventType {
   // Window Events
   FULLSCREEN_EXIT = 'FULLSCREEN_EXIT',
   WINDOW_RESIZE = 'WINDOW_RESIZE',
+
+  // Display Events
+  MULTIPLE_DISPLAYS_DETECTED = 'MULTIPLE_DISPLAYS_DETECTED',
+  DISPLAY_CHECK_DENIED = 'DISPLAY_CHECK_DENIED',
+  DISPLAY_CHECK_UNSUPPORTED = 'DISPLAY_CHECK_UNSUPPORTED',
 }
 
 /**
@@ -70,6 +75,15 @@ export interface ClientEventData {
   // Additional context
   targetElement?: string;
   url?: string;
+
+  // For display detection events
+  screenCount?: number;
+  screens?: Array<{
+    width: number;
+    height: number;
+    isPrimary: boolean;
+    label?: string;
+  }>;
 }
 
 /**
@@ -105,11 +119,15 @@ export interface ClientEvent {
 /**
  * Get the severity level for a client event type
  */
-export function getClientEventSeverity(type: ClientEventType): ClientEventSeverity {
+export function getClientEventSeverity(
+  type: ClientEventType
+): ClientEventSeverity {
   switch (type) {
     // Critical events - high security concern
     case ClientEventType.DEVTOOLS_OPENED:
     case ClientEventType.PRINT_SCREEN:
+    case ClientEventType.MULTIPLE_DISPLAYS_DETECTED:
+    case ClientEventType.DISPLAY_CHECK_DENIED:
       return 'critical';
 
     // Warning events - moderate security concern
@@ -120,6 +138,7 @@ export function getClientEventSeverity(type: ClientEventType): ClientEventSeveri
     case ClientEventType.WINDOW_BLUR:
     case ClientEventType.FULLSCREEN_EXIT:
     case ClientEventType.WINDOW_RESIZE:
+    case ClientEventType.DISPLAY_CHECK_UNSUPPORTED:
       return 'warning';
 
     // Info events - low security concern
@@ -160,8 +179,13 @@ export function getClientEventMessage(type: ClientEventType): string {
       return 'Exited fullscreen';
     case ClientEventType.WINDOW_RESIZE:
       return 'Window resized';
+    case ClientEventType.MULTIPLE_DISPLAYS_DETECTED:
+      return 'Multiple displays detected';
+    case ClientEventType.DISPLAY_CHECK_DENIED:
+      return 'Display check permission denied';
+    case ClientEventType.DISPLAY_CHECK_UNSUPPORTED:
+      return 'Display check not supported';
     default:
       return 'Unknown event';
   }
 }
-
