@@ -10,70 +10,75 @@ export type SessionEventDocument = HydratedDocument<SessionEvent>;
 export enum EventType {
   // Face Recognition (existing)
   FACE_RECOGNITION = 'FACE_RECOGNITION',
-  
+
   // Face Position
   FACE_TURNED_AWAY = 'FACE_TURNED_AWAY',
   FACE_RETURNED = 'FACE_RETURNED',
   FACE_NOT_DETECTED = 'FACE_NOT_DETECTED',
   FACE_DETECTED = 'FACE_DETECTED',
-  
+
   // Gaze/Eye Direction
   GAZE_AWAY = 'GAZE_AWAY',
   GAZE_RETURNED = 'GAZE_RETURNED',
-  
+
   // Eye State
   EYES_CLOSED_EXTENDED = 'EYES_CLOSED_EXTENDED',
   EYES_OPENED = 'EYES_OPENED',
   EXCESSIVE_BLINKING = 'EXCESSIVE_BLINKING',
   SQUINTING_DETECTED = 'SQUINTING_DETECTED',
-  
+
   // Speaking
   SPEAKING_DETECTED = 'SPEAKING_DETECTED',
   SPEAKING_STOPPED = 'SPEAKING_STOPPED',
-  
+
   // Head Movement
   HEAD_MOVEMENT_EXCESSIVE = 'HEAD_MOVEMENT_EXCESSIVE',
   HEAD_TILTED = 'HEAD_TILTED',
   HEAD_POSITION_NORMAL = 'HEAD_POSITION_NORMAL',
-  
+
   // Expression
   EXPRESSION_CONFUSED = 'EXPRESSION_CONFUSED',
   LIP_READING_DETECTED = 'LIP_READING_DETECTED',
-  
+
   // Browser/Session (face tracking)
   TAB_SWITCHED_AWAY = 'TAB_SWITCHED_AWAY',
   TAB_RETURNED = 'TAB_RETURNED',
   WINDOW_BLUR = 'WINDOW_BLUR',
   WINDOW_FOCUS = 'WINDOW_FOCUS',
   MULTIPLE_FACES_DETECTED = 'MULTIPLE_FACES_DETECTED',
-  
+
   // Face Verification
   VERIFICATION_STARTED = 'VERIFICATION_STARTED',
   VERIFICATION_SUCCESS = 'VERIFICATION_SUCCESS',
   VERIFICATION_FAILED = 'VERIFICATION_FAILED',
   VERIFICATION_ERROR = 'VERIFICATION_ERROR',
-  
+
   // Client Events - Clipboard
   CLIPBOARD_COPY = 'CLIPBOARD_COPY',
   CLIPBOARD_PASTE = 'CLIPBOARD_PASTE',
   CLIPBOARD_CUT = 'CLIPBOARD_CUT',
-  
+
   // Client Events - Visibility
   TAB_HIDDEN = 'TAB_HIDDEN',
   TAB_VISIBLE = 'TAB_VISIBLE',
   CLIENT_WINDOW_BLUR = 'CLIENT_WINDOW_BLUR',
   CLIENT_WINDOW_FOCUS = 'CLIENT_WINDOW_FOCUS',
-  
+
   // Client Events - Keyboard
   DEVTOOLS_OPENED = 'DEVTOOLS_OPENED',
   PRINT_SCREEN = 'PRINT_SCREEN',
-  
+
   // Client Events - Context
   CONTEXT_MENU = 'CONTEXT_MENU',
-  
+
   // Client Events - Window
   FULLSCREEN_EXIT = 'FULLSCREEN_EXIT',
   WINDOW_RESIZE = 'WINDOW_RESIZE',
+
+  // Client Events - Display
+  MULTIPLE_DISPLAYS_DETECTED = 'MULTIPLE_DISPLAYS_DETECTED',
+  DISPLAY_CHECK_DENIED = 'DISPLAY_CHECK_DENIED',
+  DISPLAY_CHECK_UNSUPPORTED = 'DISPLAY_CHECK_UNSUPPORTED',
 
   // Chat Response Events
   AI_RESPONDED = 'AI_RESPONDED',
@@ -125,22 +130,22 @@ export interface ClientEventData {
   message: string;
   details?: string;
   severity: 'info' | 'warning' | 'critical';
-  
+
   // Clipboard data
   clipboardLength?: number;
   hasText?: boolean;
-  
+
   // Visibility data
   visibilityState?: string;
   hiddenDuration?: number;
-  
+
   // Window data
   windowWidth?: number;
   windowHeight?: number;
   previousWidth?: number;
   previousHeight?: number;
   isFullscreen?: boolean;
-  
+
   // Keyboard data
   key?: string;
   modifiers?: {
@@ -149,7 +154,7 @@ export interface ClientEventData {
     shift?: boolean;
     meta?: boolean;
   };
-  
+
   // Context
   targetElement?: string;
   url?: string;
@@ -169,7 +174,11 @@ export interface ChatEventData {
  * Union type for all event data types.
  * Extend this as new event types are added.
  */
-export type EventData = FaceRecognitionEventData | FaceTrackingEventData | ClientEventData | ChatEventData;
+export type EventData =
+  | FaceRecognitionEventData
+  | FaceTrackingEventData
+  | ClientEventData
+  | ChatEventData;
 
 @Schema({ timestamps: false })
 export class SessionEvent {

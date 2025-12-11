@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Session, SessionDocument, VideoChunk, VideoStatus } from './session.schema';
+import {
+  Session,
+  SessionDocument,
+  VideoChunk,
+  VideoStatus,
+} from './session.schema';
 import {
   SessionEvent,
   SessionEventDocument,
@@ -10,53 +15,58 @@ import {
   FaceTrackingEventData,
   ClientEventData,
 } from './session-event.schema';
-import { FaceTrackingEventPayload, FaceTrackingEventType, ClientEventPayload, ClientEventType } from '@sec-flags/shared';
+import {
+  FaceTrackingEventPayload,
+  FaceTrackingEventType,
+  ClientEventPayload,
+  ClientEventType,
+} from '@sec-flags/shared';
 
 /**
  * Map frontend event types to backend EventType enum
  */
 const TRACKING_EVENT_TYPE_MAP: Record<FaceTrackingEventType, EventType> = {
   // Face Position
-  'face_away': EventType.FACE_TURNED_AWAY,
-  'face_returned': EventType.FACE_RETURNED,
-  'face_not_detected': EventType.FACE_NOT_DETECTED,
-  'face_detected': EventType.FACE_DETECTED,
-  
+  face_away: EventType.FACE_TURNED_AWAY,
+  face_returned: EventType.FACE_RETURNED,
+  face_not_detected: EventType.FACE_NOT_DETECTED,
+  face_detected: EventType.FACE_DETECTED,
+
   // Gaze/Eye Direction
-  'looking_away': EventType.GAZE_AWAY,
-  'looking_back': EventType.GAZE_RETURNED,
-  
+  looking_away: EventType.GAZE_AWAY,
+  looking_back: EventType.GAZE_RETURNED,
+
   // Eye State
-  'eyes_closed_extended': EventType.EYES_CLOSED_EXTENDED,
-  'eyes_opened': EventType.EYES_OPENED,
-  'excessive_blinking': EventType.EXCESSIVE_BLINKING,
-  'squinting_detected': EventType.SQUINTING_DETECTED,
-  
+  eyes_closed_extended: EventType.EYES_CLOSED_EXTENDED,
+  eyes_opened: EventType.EYES_OPENED,
+  excessive_blinking: EventType.EXCESSIVE_BLINKING,
+  squinting_detected: EventType.SQUINTING_DETECTED,
+
   // Speaking
-  'talking': EventType.SPEAKING_DETECTED,
-  'stopped_talking': EventType.SPEAKING_STOPPED,
-  
+  talking: EventType.SPEAKING_DETECTED,
+  stopped_talking: EventType.SPEAKING_STOPPED,
+
   // Head Movement
-  'head_movement_excessive': EventType.HEAD_MOVEMENT_EXCESSIVE,
-  'head_tilted': EventType.HEAD_TILTED,
-  'head_position_normal': EventType.HEAD_POSITION_NORMAL,
-  
+  head_movement_excessive: EventType.HEAD_MOVEMENT_EXCESSIVE,
+  head_tilted: EventType.HEAD_TILTED,
+  head_position_normal: EventType.HEAD_POSITION_NORMAL,
+
   // Expression
-  'expression_confused': EventType.EXPRESSION_CONFUSED,
-  'lip_reading_detected': EventType.LIP_READING_DETECTED,
-  
+  expression_confused: EventType.EXPRESSION_CONFUSED,
+  lip_reading_detected: EventType.LIP_READING_DETECTED,
+
   // Browser/Session
-  'tab_switched_away': EventType.TAB_SWITCHED_AWAY,
-  'tab_returned': EventType.TAB_RETURNED,
-  'window_blur': EventType.WINDOW_BLUR,
-  'window_focus': EventType.WINDOW_FOCUS,
-  'multiple_faces_detected': EventType.MULTIPLE_FACES_DETECTED,
-  
+  tab_switched_away: EventType.TAB_SWITCHED_AWAY,
+  tab_returned: EventType.TAB_RETURNED,
+  window_blur: EventType.WINDOW_BLUR,
+  window_focus: EventType.WINDOW_FOCUS,
+  multiple_faces_detected: EventType.MULTIPLE_FACES_DETECTED,
+
   // Face Verification
-  'verification_started': EventType.VERIFICATION_STARTED,
-  'verification_success': EventType.VERIFICATION_SUCCESS,
-  'verification_failed': EventType.VERIFICATION_FAILED,
-  'verification_error': EventType.VERIFICATION_ERROR,
+  verification_started: EventType.VERIFICATION_STARTED,
+  verification_success: EventType.VERIFICATION_SUCCESS,
+  verification_failed: EventType.VERIFICATION_FAILED,
+  verification_error: EventType.VERIFICATION_ERROR,
 };
 
 /**
@@ -67,23 +77,30 @@ const CLIENT_EVENT_TYPE_MAP: Record<ClientEventType, EventType> = {
   [ClientEventType.CLIPBOARD_COPY]: EventType.CLIPBOARD_COPY,
   [ClientEventType.CLIPBOARD_PASTE]: EventType.CLIPBOARD_PASTE,
   [ClientEventType.CLIPBOARD_CUT]: EventType.CLIPBOARD_CUT,
-  
+
   // Visibility
   [ClientEventType.TAB_HIDDEN]: EventType.TAB_HIDDEN,
   [ClientEventType.TAB_VISIBLE]: EventType.TAB_VISIBLE,
   [ClientEventType.WINDOW_BLUR]: EventType.CLIENT_WINDOW_BLUR,
   [ClientEventType.WINDOW_FOCUS]: EventType.CLIENT_WINDOW_FOCUS,
-  
+
   // Keyboard
   [ClientEventType.DEVTOOLS_OPENED]: EventType.DEVTOOLS_OPENED,
   [ClientEventType.PRINT_SCREEN]: EventType.PRINT_SCREEN,
-  
+
   // Context
   [ClientEventType.CONTEXT_MENU]: EventType.CONTEXT_MENU,
-  
+
   // Window
   [ClientEventType.FULLSCREEN_EXIT]: EventType.FULLSCREEN_EXIT,
   [ClientEventType.WINDOW_RESIZE]: EventType.WINDOW_RESIZE,
+
+  // Display
+  [ClientEventType.MULTIPLE_DISPLAYS_DETECTED]:
+    EventType.MULTIPLE_DISPLAYS_DETECTED,
+  [ClientEventType.DISPLAY_CHECK_DENIED]: EventType.DISPLAY_CHECK_DENIED,
+  [ClientEventType.DISPLAY_CHECK_UNSUPPORTED]:
+    EventType.DISPLAY_CHECK_UNSUPPORTED,
 };
 
 @Injectable()
@@ -93,7 +110,7 @@ export class SessionService {
   constructor(
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(SessionEvent.name)
-    private sessionEventModel: Model<SessionEventDocument>,
+    private sessionEventModel: Model<SessionEventDocument>
   ) {}
 
   /**
@@ -102,7 +119,7 @@ export class SessionService {
   async createSession(
     sessionId: string,
     clientId: string,
-    initialFaceImage?: Buffer,
+    initialFaceImage?: Buffer
   ): Promise<SessionDocument> {
     const session = new this.sessionModel({
       sessionId,
@@ -126,7 +143,7 @@ export class SessionService {
    * Get a session by clientId
    */
   async getSessionByClientId(
-    clientId: string,
+    clientId: string
   ): Promise<SessionDocument | null> {
     return this.sessionModel.findOne({ clientId }).exec();
   }
@@ -136,13 +153,13 @@ export class SessionService {
    */
   async updateFaceImage(
     sessionId: string,
-    faceImage: Buffer,
+    faceImage: Buffer
   ): Promise<SessionDocument | null> {
     const updated = await this.sessionModel
       .findOneAndUpdate(
         { sessionId },
         { initialFaceImage: faceImage },
-        { new: true },
+        { new: true }
       )
       .exec();
 
@@ -170,7 +187,7 @@ export class SessionService {
     sessionId: string,
     type: EventType,
     data: EventData,
-    rawData?: Record<string, unknown>,
+    rawData?: Record<string, unknown>
   ): Promise<SessionEventDocument> {
     const event = new this.sessionEventModel({
       sessionId,
@@ -193,7 +210,7 @@ export class SessionService {
     confidence: number,
     isMatch: boolean,
     rawData: Record<string, unknown>,
-    message?: string,
+    message?: string
   ): Promise<SessionEventDocument> {
     return this.logEvent(
       sessionId,
@@ -203,7 +220,7 @@ export class SessionService {
         isMatch,
         message,
       },
-      rawData,
+      rawData
     );
   }
 
@@ -212,11 +229,11 @@ export class SessionService {
    */
   async logFaceTrackingEvent(
     sessionId: string,
-    payload: FaceTrackingEventPayload,
+    payload: FaceTrackingEventPayload
   ): Promise<SessionEventDocument> {
     // Map frontend event type to backend EventType
     const eventType = TRACKING_EVENT_TYPE_MAP[payload.type];
-    
+
     if (!eventType) {
       this.logger.warn(`Unknown tracking event type: ${payload.type}`);
       // Default to a generic type or throw
@@ -256,11 +273,11 @@ export class SessionService {
    */
   async logClientEvent(
     sessionId: string,
-    payload: ClientEventPayload,
+    payload: ClientEventPayload
   ): Promise<SessionEventDocument> {
     // Map client event type to backend EventType
     const eventType = CLIENT_EVENT_TYPE_MAP[payload.type];
-    
+
     if (!eventType) {
       this.logger.warn(`Unknown client event type: ${payload.type}`);
       throw new Error(`Unknown client event type: ${payload.type}`);
@@ -301,16 +318,13 @@ export class SessionService {
    */
   async getSessionEvents(
     sessionId: string,
-    type?: EventType,
+    type?: EventType
   ): Promise<SessionEventDocument[]> {
     const query: { sessionId: string; type?: EventType } = { sessionId };
     if (type) {
       query.type = type;
     }
-    return this.sessionEventModel
-      .find(query)
-      .sort({ timestamp: -1 })
-      .exec();
+    return this.sessionEventModel.find(query).sort({ timestamp: -1 }).exec();
   }
 
   /**
@@ -332,7 +346,7 @@ export class SessionService {
    */
   async getEventsByType(
     type: EventType,
-    limit = 100,
+    limit = 100
   ): Promise<SessionEventDocument[]> {
     return this.sessionEventModel
       .find({ type })
@@ -345,15 +359,15 @@ export class SessionService {
    * Get event counts by type for a session
    */
   async getEventCountsBySession(
-    sessionId: string,
+    sessionId: string
   ): Promise<Record<string, number>> {
     const events = await this.sessionEventModel.find({ sessionId }).exec();
     const counts: Record<string, number> = {};
-    
+
     for (const event of events) {
       counts[event.type] = (counts[event.type] || 0) + 1;
     }
-    
+
     return counts;
   }
 
@@ -362,7 +376,7 @@ export class SessionService {
    */
   async getAllSessions(
     page: number,
-    limit: number,
+    limit: number
   ): Promise<{
     sessions: SessionDocument[];
     total: number;
@@ -399,7 +413,9 @@ export class SessionService {
   /**
    * Start video recording for a session
    */
-  async startVideoRecording(sessionId: string): Promise<SessionDocument | null> {
+  async startVideoRecording(
+    sessionId: string
+  ): Promise<SessionDocument | null> {
     const updated = await this.sessionModel
       .findOneAndUpdate(
         { sessionId },
@@ -408,7 +424,7 @@ export class SessionService {
           videoStartedAt: new Date(),
           videoChunks: [],
         },
-        { new: true },
+        { new: true }
       )
       .exec();
 
@@ -423,7 +439,7 @@ export class SessionService {
    */
   async addVideoChunk(
     sessionId: string,
-    chunk: { index: number; s3Key: string; size?: number },
+    chunk: { index: number; s3Key: string; size?: number }
   ): Promise<SessionDocument | null> {
     const videoChunk: VideoChunk = {
       index: chunk.index,
@@ -438,13 +454,13 @@ export class SessionService {
         {
           $push: { videoChunks: videoChunk },
         },
-        { new: true },
+        { new: true }
       )
       .exec();
 
     if (updated) {
       this.logger.log(
-        `Video chunk ${chunk.index} added for session: ${sessionId}`,
+        `Video chunk ${chunk.index} added for session: ${sessionId}`
       );
     }
     return updated;
@@ -471,7 +487,7 @@ export class SessionService {
    * Complete video recording for a session
    */
   async completeVideoRecording(
-    sessionId: string,
+    sessionId: string
   ): Promise<SessionDocument | null> {
     const updated = await this.sessionModel
       .findOneAndUpdate(
@@ -480,7 +496,7 @@ export class SessionService {
           videoStatus: 'completed' as VideoStatus,
           videoEndedAt: new Date(),
         },
-        { new: true },
+        { new: true }
       )
       .exec();
 
@@ -501,7 +517,7 @@ export class SessionService {
           videoStatus: 'failed' as VideoStatus,
           videoEndedAt: new Date(),
         },
-        { new: true },
+        { new: true }
       )
       .exec();
 
@@ -532,7 +548,7 @@ export class SessionService {
    * Get video status for a session
    */
   async getVideoStatus(
-    sessionId: string,
+    sessionId: string
   ): Promise<{ status: VideoStatus; chunkCount: number } | null> {
     const session = await this.sessionModel
       .findOne({ sessionId })

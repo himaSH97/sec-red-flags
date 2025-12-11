@@ -14,6 +14,7 @@ import {
   usePreChatChecks,
   CheckStatus,
   ChecklistItem,
+  PreChatChecksConfig,
 } from '@/lib/hooks/use-pre-chat-checks';
 import {
   Check,
@@ -36,6 +37,8 @@ interface PreChatChecklistProps {
     cameraStream: MediaStream | null,
     capturedFaceImage: string | null
   ) => void;
+  /** Configuration for which checks are enabled */
+  config?: PreChatChecksConfig;
 }
 
 /**
@@ -342,6 +345,7 @@ export function PreChatChecklist({
   open,
   onOpenChange,
   onComplete,
+  config = {},
 }: PreChatChecklistProps) {
   const {
     items,
@@ -354,7 +358,7 @@ export function PreChatChecklist({
     completeFaceCapture,
     cameraStream,
     capturedFaceImage,
-  } = usePreChatChecks();
+  } = usePreChatChecks(config);
 
   // Track if we've already started checks for this modal open
   const hasStartedChecksRef = useRef(false);

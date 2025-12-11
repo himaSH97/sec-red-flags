@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { PreChatChecklist } from '@/components/ui/pre-chat-checklist';
 import { socketService } from '@/lib/socket';
-import { adminApi } from '@/lib/api';
+import { adminApi, SystemConfig } from '@/lib/api';
 import {
   MessageSquare,
   Shield,
@@ -19,9 +19,7 @@ import { toast } from 'sonner';
 export default function Home() {
   const router = useRouter();
   const [showChecklist, setShowChecklist] = useState(false);
-  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<
-    boolean | null
-  >(null);
+  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Fetch config on mount
@@ -29,11 +27,19 @@ export default function Home() {
     const loadConfig = async () => {
       try {
         const config = await adminApi.getConfig();
-        setFaceRecognitionEnabled(config.faceRecognitionEnabled);
+        setSystemConfig(config);
       } catch (error) {
         console.error('Failed to load config:', error);
-        // Default to enabled if we can't fetch config
-        setFaceRecognitionEnabled(true);
+        // Default to all enabled if we can't fetch config
+        setSystemConfig({
+          _id: '',
+          key: 'system',
+          faceRecognitionEnabled: true,
+          screenShareEnabled: true,
+          multiDisplayCheckEnabled: true,
+          createdAt: '',
+          updatedAt: '',
+        });
       }
     };
     loadConfig();
@@ -62,7 +68,7 @@ export default function Home() {
     if (capturedFaceImage) {
       sessionStorage.setItem('referenceFace', capturedFaceImage);
       sessionStorage.removeItem('skipFaceVerification');
-    } else if (faceRecognitionEnabled === false) {
+    } else if (systemConfig?.faceRecognitionEnabled === false) {
       // Face recognition is disabled
       sessionStorage.removeItem('referenceFace');
       sessionStorage.setItem('skipFaceVerification', 'true');
@@ -145,10 +151,10 @@ export default function Home() {
           <Button
             onClick={handleStartChat}
             size="lg"
-            disabled={isLoading || faceRecognitionEnabled === null}
+            disabled={isLoading || systemConfig === null}
             className="h-12 px-8 text-base font-medium shadow-lg shadow-slate-200 transition-all hover:shadow-xl hover:shadow-slate-300"
           >
-            {isLoading || faceRecognitionEnabled === null ? (
+            {isLoading || systemConfig === null ? (
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             ) : (
               <MessageSquare className="mr-2 h-5 w-5" />
@@ -194,6 +200,11 @@ export default function Home() {
         open={showChecklist}
         onOpenChange={setShowChecklist}
         onComplete={handleChecklistComplete}
+        config={{
+          multiDisplayCheckEnabled: systemConfig?.multiDisplayCheckEnabled,
+          screenShareEnabled: systemConfig?.screenShareEnabled,
+          faceRecognitionEnabled: systemConfig?.faceRecognitionEnabled,
+        }}
       />
     </main>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import {
   checkMultipleDisplays,
   isDisplayCheckSupported,
@@ -21,6 +21,15 @@ export interface ChecklistItem {
   description: string;
   status: CheckStatus;
   errorMessage?: string;
+}
+
+export interface PreChatChecksConfig {
+  /** Whether multi-display check is enabled */
+  multiDisplayCheckEnabled?: boolean;
+  /** Whether screen sharing is enabled */
+  screenShareEnabled?: boolean;
+  /** Whether face recognition is enabled */
+  faceRecognitionEnabled?: boolean;
 }
 
 export interface PreChatChecksResult {
@@ -48,7 +57,7 @@ export interface PreChatChecksResult {
   capturedFaceImage: string | null;
 }
 
-const INITIAL_ITEMS: ChecklistItem[] = [
+const ALL_ITEMS: ChecklistItem[] = [
   {
     id: 'single-display',
     label: 'Single Display',
@@ -76,11 +85,52 @@ const INITIAL_ITEMS: ChecklistItem[] = [
 ];
 
 /**
+ * Get initial checklist items based on config
+ */
+function getInitialItems(config: PreChatChecksConfig): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+
+  // Multi-display check (defaults to enabled)
+  if (config.multiDisplayCheckEnabled !== false) {
+    items.push(ALL_ITEMS.find((i) => i.id === 'single-display')!);
+  }
+
+  // Camera access is always needed if face recognition is enabled
+  if (config.faceRecognitionEnabled !== false) {
+    items.push(ALL_ITEMS.find((i) => i.id === 'camera-access')!);
+  }
+
+  // Screen share (defaults to enabled)
+  if (config.screenShareEnabled !== false) {
+    items.push(ALL_ITEMS.find((i) => i.id === 'screen-share')!);
+  }
+
+  // Face capture (only if face recognition is enabled)
+  if (config.faceRecognitionEnabled !== false) {
+    items.push(ALL_ITEMS.find((i) => i.id === 'face-capture')!);
+  }
+
+  return items;
+}
+
+/**
  * Hook to manage pre-chat requirement checks
  * Validates display, camera, and fullscreen requirements before starting a chat session
  */
-export function usePreChatChecks(): PreChatChecksResult {
-  const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
+export function usePreChatChecks(
+  config: PreChatChecksConfig = {}
+): PreChatChecksResult {
+  // Memoize initial items based on config
+  const initialItems = useMemo(
+    () => getInitialItems(config),
+    [
+      config.multiDisplayCheckEnabled,
+      config.screenShareEnabled,
+      config.faceRecognitionEnabled,
+    ]
+  );
+
+  const [items, setItems] = useState<ChecklistItem[]>(initialItems);
   const [isChecking, setIsChecking] = useState(false);
   const [isAwaitingCapture, setIsAwaitingCapture] = useState(false);
   const [displayCheckResult, setDisplayCheckResult] =
@@ -89,6 +139,10 @@ export function usePreChatChecks(): PreChatChecksResult {
   const [capturedFaceImage, setCapturedFaceImage] = useState<string | null>(
     null
   );
+
+  // Store config in ref to use in callbacks
+  const configRef = useRef(config);
+  configRef.current = config;
 
   // Track if checks are running to prevent concurrent runs
   const isRunningRef = useRef(false);
@@ -306,34 +360,57 @@ export function usePreChatChecks(): PreChatChecksResult {
   );
 
   /**
-   * Run all checks sequentially
+   * Run all checks sequentially based on enabled config options
    */
   const runAllChecks = useCallback(async () => {
     if (isRunningRef.current) return;
     isRunningRef.current = true;
     setIsChecking(true);
 
-    // Run checks sequentially with small delays for visual feedback
-    const displayPassed = await checkSingleDisplay();
-    await new Promise((r) => setTimeout(r, 300));
+    const cfg = configRef.current;
 
-    if (displayPassed) {
-      const cameraPassed = await checkCameraAccess();
+    // Check 1: Single display (if enabled)
+    if (cfg.multiDisplayCheckEnabled !== false) {
+      const displayPassed = await checkSingleDisplay();
       await new Promise((r) => setTimeout(r, 300));
-
-      if (cameraPassed) {
-        const screenSharePassed = await checkScreenShare();
-        await new Promise((r) => setTimeout(r, 300));
-
-        if (screenSharePassed) {
-          // Face capture is interactive - it will resolve when user captures
-          await checkFaceCapture();
-          // Note: isChecking and isRunningRef are reset in completeFaceCapture
-          return;
-        }
+      if (!displayPassed) {
+        setIsChecking(false);
+        isRunningRef.current = false;
+        return;
       }
     }
 
+    // Check 2: Camera access (if face recognition is enabled)
+    if (cfg.faceRecognitionEnabled !== false) {
+      const cameraPassed = await checkCameraAccess();
+      await new Promise((r) => setTimeout(r, 300));
+      if (!cameraPassed) {
+        setIsChecking(false);
+        isRunningRef.current = false;
+        return;
+      }
+    }
+
+    // Check 3: Screen share (if enabled)
+    if (cfg.screenShareEnabled !== false) {
+      const screenSharePassed = await checkScreenShare();
+      await new Promise((r) => setTimeout(r, 300));
+      if (!screenSharePassed) {
+        setIsChecking(false);
+        isRunningRef.current = false;
+        return;
+      }
+    }
+
+    // Check 4: Face capture (if face recognition is enabled)
+    if (cfg.faceRecognitionEnabled !== false) {
+      // Face capture is interactive - it will resolve when user captures
+      await checkFaceCapture();
+      // Note: isChecking and isRunningRef are reset in completeFaceCapture
+      return;
+    }
+
+    // If we got here, all applicable checks passed
     setIsChecking(false);
     isRunningRef.current = false;
   }, [
@@ -402,7 +479,7 @@ export function usePreChatChecks(): PreChatChecksResult {
       faceCaptureResolveRef.current = null;
     }
 
-    setItems(INITIAL_ITEMS);
+    setItems(getInitialItems(configRef.current));
     setDisplayCheckResult(null);
   }, []);
 
