@@ -8,7 +8,12 @@ import {
 } from '@/lib/display-check';
 import { screenShareService } from '@/lib/screen-share';
 
-export type CheckStatus = 'pending' | 'checking' | 'passed' | 'failed';
+export type CheckStatus =
+  | 'pending'
+  | 'checking'
+  | 'passed'
+  | 'failed'
+  | 'awaiting-capture'; // For interactive steps like face capture
 
 export interface ChecklistItem {
   id: string;
@@ -25,16 +30,22 @@ export interface PreChatChecksResult {
   allPassed: boolean;
   /** Whether any check is currently running */
   isChecking: boolean;
+  /** Whether waiting for face capture */
+  isAwaitingCapture: boolean;
   /** Run all checks sequentially */
   runAllChecks: () => Promise<void>;
   /** Retry a specific check by ID */
   retryCheck: (id: string) => Promise<void>;
   /** Reset all checks to pending state */
   resetChecks: () => void;
+  /** Complete face capture with the captured image */
+  completeFaceCapture: (imageBase64: string) => void;
   /** Display check result (for logging/audit) */
   displayCheckResult: DisplayCheckResult | null;
   /** Camera stream reference (to pass to chat page) */
   cameraStream: MediaStream | null;
+  /** Captured face image (base64) */
+  capturedFaceImage: string | null;
 }
 
 const INITIAL_ITEMS: ChecklistItem[] = [
@@ -56,6 +67,12 @@ const INITIAL_ITEMS: ChecklistItem[] = [
     description: 'Share your entire screen for session monitoring',
     status: 'pending',
   },
+  {
+    id: 'face-capture',
+    label: 'Face Capture',
+    description: 'Capture your face for identity verification',
+    status: 'pending',
+  },
 ];
 
 /**
@@ -65,12 +82,20 @@ const INITIAL_ITEMS: ChecklistItem[] = [
 export function usePreChatChecks(): PreChatChecksResult {
   const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
   const [isChecking, setIsChecking] = useState(false);
+  const [isAwaitingCapture, setIsAwaitingCapture] = useState(false);
   const [displayCheckResult, setDisplayCheckResult] =
     useState<DisplayCheckResult | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [capturedFaceImage, setCapturedFaceImage] = useState<string | null>(
+    null
+  );
 
   // Track if checks are running to prevent concurrent runs
   const isRunningRef = useRef(false);
+  // Resolve function for face capture promise
+  const faceCaptureResolveRef = useRef<((success: boolean) => void) | null>(
+    null
+  );
 
   /**
    * Update a specific item's status
@@ -237,6 +262,50 @@ export function usePreChatChecks(): PreChatChecksResult {
   }, [updateItem]);
 
   /**
+   * Face capture check - waits for user to capture their face
+   * This is an interactive step that requires user action
+   */
+  const checkFaceCapture = useCallback(async (): Promise<boolean> => {
+    updateItem('face-capture', {
+      status: 'awaiting-capture',
+      errorMessage: undefined,
+    });
+    setIsAwaitingCapture(true);
+
+    // Wait for face capture to complete
+    return new Promise<boolean>((resolve) => {
+      faceCaptureResolveRef.current = resolve;
+    });
+  }, [updateItem]);
+
+  /**
+   * Complete the face capture with the captured image
+   */
+  const completeFaceCapture = useCallback(
+    (imageBase64: string) => {
+      if (!imageBase64) {
+        updateItem('face-capture', {
+          status: 'failed',
+          errorMessage: 'No face image captured. Please try again.',
+        });
+        setIsAwaitingCapture(false);
+        faceCaptureResolveRef.current?.(false);
+        faceCaptureResolveRef.current = null;
+        return;
+      }
+
+      setCapturedFaceImage(imageBase64);
+      updateItem('face-capture', { status: 'passed' });
+      setIsAwaitingCapture(false);
+      setIsChecking(false);
+      isRunningRef.current = false;
+      faceCaptureResolveRef.current?.(true);
+      faceCaptureResolveRef.current = null;
+    },
+    [updateItem]
+  );
+
+  /**
    * Run all checks sequentially
    */
   const runAllChecks = useCallback(async () => {
@@ -253,13 +322,26 @@ export function usePreChatChecks(): PreChatChecksResult {
       await new Promise((r) => setTimeout(r, 300));
 
       if (cameraPassed) {
-        await checkScreenShare();
+        const screenSharePassed = await checkScreenShare();
+        await new Promise((r) => setTimeout(r, 300));
+
+        if (screenSharePassed) {
+          // Face capture is interactive - it will resolve when user captures
+          await checkFaceCapture();
+          // Note: isChecking and isRunningRef are reset in completeFaceCapture
+          return;
+        }
       }
     }
 
     setIsChecking(false);
     isRunningRef.current = false;
-  }, [checkSingleDisplay, checkCameraAccess, checkScreenShare]);
+  }, [
+    checkSingleDisplay,
+    checkCameraAccess,
+    checkScreenShare,
+    checkFaceCapture,
+  ]);
 
   /**
    * Retry a specific check
@@ -273,19 +355,27 @@ export function usePreChatChecks(): PreChatChecksResult {
       switch (id) {
         case 'single-display':
           await checkSingleDisplay();
+          setIsChecking(false);
+          isRunningRef.current = false;
           break;
         case 'camera-access':
           await checkCameraAccess();
+          setIsChecking(false);
+          isRunningRef.current = false;
           break;
         case 'screen-share':
           await checkScreenShare();
+          setIsChecking(false);
+          isRunningRef.current = false;
+          break;
+        case 'face-capture':
+          // Face capture is interactive
+          await checkFaceCapture();
+          // Note: isChecking and isRunningRef are reset in completeFaceCapture
           break;
       }
-
-      setIsChecking(false);
-      isRunningRef.current = false;
     },
-    [checkSingleDisplay, checkCameraAccess, checkScreenShare]
+    [checkSingleDisplay, checkCameraAccess, checkScreenShare, checkFaceCapture]
   );
 
   /**
@@ -302,6 +392,16 @@ export function usePreChatChecks(): PreChatChecksResult {
     // Stop screen sharing if active
     screenShareService.stopSharing();
 
+    // Clear captured face
+    setCapturedFaceImage(null);
+    setIsAwaitingCapture(false);
+
+    // Cancel any pending face capture
+    if (faceCaptureResolveRef.current) {
+      faceCaptureResolveRef.current(false);
+      faceCaptureResolveRef.current = null;
+    }
+
     setItems(INITIAL_ITEMS);
     setDisplayCheckResult(null);
   }, []);
@@ -313,11 +413,14 @@ export function usePreChatChecks(): PreChatChecksResult {
     items,
     allPassed,
     isChecking,
+    isAwaitingCapture,
     runAllChecks,
     retryCheck,
     resetChecks,
+    completeFaceCapture,
     displayCheckResult,
     cameraStream,
+    capturedFaceImage,
   };
 }
 

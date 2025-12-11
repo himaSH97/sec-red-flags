@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -25,13 +25,17 @@ import {
   ArrowRight,
   Shield,
   ScreenShare,
+  User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface PreChatChecklistProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onComplete: (cameraStream: MediaStream | null) => void;
+  onComplete: (
+    cameraStream: MediaStream | null,
+    capturedFaceImage: string | null
+  ) => void;
 }
 
 /**
@@ -45,6 +49,8 @@ function getItemIcon(id: string) {
       return Camera;
     case 'screen-share':
       return ScreenShare;
+    case 'face-capture':
+      return User;
     default:
       return Shield;
   }
@@ -59,7 +65,7 @@ function StatusIndicator({ status }: { status: CheckStatus }) {
       {status === 'pending' && (
         <div className="h-6 w-6 rounded-full border-2 border-slate-200 bg-slate-50 transition-all duration-300" />
       )}
-      {status === 'checking' && (
+      {(status === 'checking' || status === 'awaiting-capture') && (
         <div className="animate-pulse">
           <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
         </div>
@@ -101,7 +107,8 @@ function ChecklistItemRow({
         'group flex items-center gap-4 rounded-xl border p-4 transition-all duration-500',
         'animate-slide-in-up',
         item.status === 'pending' && 'border-slate-200 bg-slate-50/50',
-        item.status === 'checking' && 'border-blue-200 bg-blue-50/50',
+        (item.status === 'checking' || item.status === 'awaiting-capture') &&
+          'border-blue-200 bg-blue-50/50',
         item.status === 'passed' &&
           'border-emerald-200 bg-emerald-50/50 shadow-sm',
         item.status === 'failed' && 'border-red-200 bg-red-50/50'
@@ -113,7 +120,8 @@ function ChecklistItemRow({
         className={cn(
           'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors duration-300',
           item.status === 'pending' && 'bg-slate-100 text-slate-400',
-          item.status === 'checking' && 'bg-blue-100 text-blue-500',
+          (item.status === 'checking' || item.status === 'awaiting-capture') &&
+            'bg-blue-100 text-blue-500',
           item.status === 'passed' && 'bg-emerald-100 text-emerald-600',
           item.status === 'failed' && 'bg-red-100 text-red-500'
         )}
@@ -127,7 +135,9 @@ function ChecklistItemRow({
           className={cn(
             'font-medium transition-colors duration-300',
             item.status === 'pending' && 'text-slate-600',
-            item.status === 'checking' && 'text-blue-700',
+            (item.status === 'checking' ||
+              item.status === 'awaiting-capture') &&
+              'text-blue-700',
             item.status === 'passed' && 'text-emerald-700',
             item.status === 'failed' && 'text-red-700'
           )}
@@ -191,6 +201,140 @@ function ProgressIndicator({ items }: { items: ChecklistItem[] }) {
 }
 
 /**
+ * Face capture component shown when awaiting face capture
+ */
+function FaceCapturePanel({
+  cameraStream,
+  onCapture,
+}: {
+  cameraStream: MediaStream | null;
+  onCapture: (imageBase64: string) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
+  // Set up video stream
+  useEffect(() => {
+    if (videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream;
+      videoRef.current.play().catch(console.error);
+    }
+  }, [cameraStream]);
+
+  const handleCapture = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    if (!context) return;
+
+    // Set canvas size to match video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw video frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Convert to base64
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
+    setCapturedImage(imageBase64);
+  }, []);
+
+  const handleRetake = useCallback(() => {
+    setCapturedImage(null);
+  }, []);
+
+  const handleConfirm = useCallback(() => {
+    if (capturedImage) {
+      onCapture(capturedImage);
+    }
+  }, [capturedImage, onCapture]);
+
+  return (
+    <div className="animate-slide-in-up rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100">
+          <Camera className="h-4 w-4 text-blue-600" />
+        </div>
+        <div>
+          <h4 className="font-medium text-blue-700">Capture Your Face</h4>
+          <p className="text-sm text-slate-500">
+            Position your face in the frame and click capture
+          </p>
+        </div>
+      </div>
+
+      {/* Camera preview / captured image */}
+      <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-slate-900">
+        {/* Video element (hidden when captured) */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={cn(
+            'h-full w-full object-cover',
+            capturedImage && 'hidden'
+          )}
+        />
+
+        {/* Captured image preview */}
+        {capturedImage && (
+          <img
+            src={capturedImage}
+            alt="Captured face"
+            className="h-full w-full object-cover"
+          />
+        )}
+
+        {/* Canvas for capture (hidden) */}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Face guide overlay */}
+        {!capturedImage && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="h-32 w-24 rounded-full border-2 border-dashed border-white/50" />
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="mt-3 flex justify-center gap-2">
+        {!capturedImage ? (
+          <Button onClick={handleCapture} size="sm" className="gap-1.5">
+            <Camera className="h-4 w-4" />
+            Capture
+          </Button>
+        ) : (
+          <>
+            <Button
+              onClick={handleRetake}
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Retake
+            </Button>
+            <Button
+              onClick={handleConfirm}
+              size="sm"
+              className="gap-1.5 bg-emerald-500 hover:bg-emerald-600"
+            >
+              <Check className="h-4 w-4" />
+              Confirm
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Pre-Chat Checklist Modal
  * Shows animated checklist of requirements before starting a chat session
  */
@@ -203,10 +347,13 @@ export function PreChatChecklist({
     items,
     allPassed,
     isChecking,
+    isAwaitingCapture,
     runAllChecks,
     retryCheck,
     resetChecks,
+    completeFaceCapture,
     cameraStream,
+    capturedFaceImage,
   } = usePreChatChecks();
 
   // Track if we've already started checks for this modal open
@@ -240,9 +387,9 @@ export function PreChatChecklist({
   // Handle continue
   const handleContinue = useCallback(() => {
     if (allPassed) {
-      onComplete(cameraStream);
+      onComplete(cameraStream, capturedFaceImage);
     }
-  }, [allPassed, onComplete, cameraStream]);
+  }, [allPassed, onComplete, cameraStream, capturedFaceImage]);
 
   // Handle close - cleanup camera if needed
   const handleClose = useCallback(
@@ -254,6 +401,11 @@ export function PreChatChecklist({
     },
     [onOpenChange, cameraStream]
   );
+
+  // Filter out face-capture from regular items when awaiting capture
+  const regularItems = isAwaitingCapture
+    ? items.filter((item) => item.id !== 'face-capture')
+    : items;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -275,7 +427,7 @@ export function PreChatChecklist({
 
         {/* Checklist items */}
         <div className="space-y-3 py-2">
-          {items.map((item, index) => (
+          {regularItems.map((item, index) => (
             <ChecklistItemRow
               key={item.id}
               item={item}
@@ -284,13 +436,21 @@ export function PreChatChecklist({
               isChecking={isChecking}
             />
           ))}
+
+          {/* Face capture panel - shown when awaiting capture */}
+          {isAwaitingCapture && (
+            <FaceCapturePanel
+              cameraStream={cameraStream}
+              onCapture={completeFaceCapture}
+            />
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button
             variant="ghost"
             onClick={() => handleClose(false)}
-            disabled={isChecking}
+            disabled={isChecking && !isAwaitingCapture}
           >
             Cancel
           </Button>
@@ -303,7 +463,7 @@ export function PreChatChecklist({
                 'bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-200'
             )}
           >
-            {isChecking ? (
+            {isChecking && !isAwaitingCapture ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Checking...
@@ -313,6 +473,8 @@ export function PreChatChecklist({
                 Continue
                 <ArrowRight className="h-4 w-4" />
               </>
+            ) : isAwaitingCapture ? (
+              'Capture your face'
             ) : (
               'Complete all checks'
             )}
