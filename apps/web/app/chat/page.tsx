@@ -27,7 +27,6 @@ import {
 } from '@/lib/face-tracking';
 import { clientEventsService } from '@/lib/client-events';
 import { keystrokeLogger } from '@/lib/keystroke-logger';
-import { screenShareService } from '@/lib/screen-share';
 import {
   FaceTrackingEventPayload,
   FaceTrackingEventType,
@@ -55,7 +54,6 @@ import {
   LogOut,
   Video,
   VideoOff,
-  ScreenShare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -98,7 +96,6 @@ export default function ChatPage() {
     useState<VideoRecorderStatus>('idle');
   const [videoChunkCount, setVideoChunkCount] = useState(0);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const [isScreenShareActive, setIsScreenShareActive] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventLogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -251,7 +248,7 @@ export default function ChatPage() {
       console.log('[ChatPage] Stopping video recording...');
       videoRecorderService.stop();
       socketService.sendVideoStop();
-
+      
       // Wait for pending uploads (including the final partial chunk) with a 10 second timeout
       console.log('[ChatPage] Waiting for pending video uploads...');
       await videoRecorderService.waitForPendingUploads(10000);
@@ -901,21 +898,17 @@ export default function ChatPage() {
     // Only check entry conditions once (Strict Mode protection)
     if (!hasCheckedEntryRef.current) {
       hasCheckedEntryRef.current = true;
-
+      
       // Check if we have a reference face or if face verification is skipped
       const referenceFace = sessionStorage.getItem('referenceFace');
-      const skipFaceVerification = sessionStorage.getItem(
-        'skipFaceVerification'
-      );
-
+      const skipFaceVerification = sessionStorage.getItem('skipFaceVerification');
+      
       if (!referenceFace && !skipFaceVerification) {
-        console.log(
-          'No reference face found and face verification not skipped, redirecting to home'
-        );
+        console.log('No reference face found and face verification not skipped, redirecting to home');
         router.push('/');
         return;
       }
-
+      
       // Clear the skip flag after reading
       if (skipFaceVerification) {
         sessionStorage.removeItem('skipFaceVerification');
@@ -961,9 +954,8 @@ export default function ChatPage() {
       setIsInitializing(false);
 
       // Check if face verification is enabled
-      const faceVerificationEnabled =
-        session.faceVerification?.enabled !== false;
-
+      const faceVerificationEnabled = session.faceVerification?.enabled !== false;
+      
       // Send reference face only if face verification is enabled
       const storedFace = sessionStorage.getItem('referenceFace');
       if (storedFace && faceVerificationEnabled) {
@@ -1195,13 +1187,13 @@ export default function ChatPage() {
     if (!isConnected) return;
 
     const faceConfig = socketService.getFaceConfig();
-
+    
     // Skip periodic verification if face recognition is disabled
     if (faceConfig?.enabled === false) {
       console.log('Face verification disabled, skipping periodic checks');
       return;
     }
-
+    
     const intervalMs = faceConfig?.checkIntervalMs || 60000;
 
     console.log(`Setting up periodic verification every ${intervalMs}ms`);
@@ -1295,30 +1287,6 @@ export default function ChatPage() {
     };
   }, []);
 
-  // Manage screen share state and cleanup
-  useEffect(() => {
-    // Check if screen share is active on mount
-    const isActive = screenShareService.isActive();
-    setIsScreenShareActive(isActive);
-
-    if (isActive) {
-      console.log('[ChatPage] Screen share is active for monitoring');
-    }
-
-    // Listen for screen share ending (user stops via browser UI)
-    const unsubscribe = screenShareService.onEnd(() => {
-      console.log('[ChatPage] Screen share ended');
-      setIsScreenShareActive(false);
-    });
-
-    // Cleanup: stop screen sharing when leaving the page
-    return () => {
-      console.log('[ChatPage] Cleaning up screen share...');
-      unsubscribe();
-      screenShareService.stopSharing();
-    };
-  }, []);
-
   // Initialize keystroke logger when session is established
   useEffect(() => {
     if (!sessionId) {
@@ -1350,14 +1318,7 @@ export default function ChatPage() {
   // Initialize video recording when session is established and camera is ready
   useEffect(() => {
     if (!sessionId || !isConnected || !isCameraReady || !streamRef.current) {
-      console.log(
-        '[ChatPage] Video recording not starting - sessionId:',
-        sessionId,
-        'connected:',
-        isConnected,
-        'cameraReady:',
-        isCameraReady
-      );
+      console.log('[ChatPage] Video recording not starting - sessionId:', sessionId, 'connected:', isConnected, 'cameraReady:', isCameraReady);
       return;
     }
 
@@ -1372,9 +1333,7 @@ export default function ChatPage() {
         if (socketService.isConnected()) {
           socketService.sendVideoUrlRequest(chunkIndex);
         } else {
-          console.warn(
-            `[ChatPage] Cannot request URL for chunk ${chunkIndex} - socket not connected`
-          );
+          console.warn(`[ChatPage] Cannot request URL for chunk ${chunkIndex} - socket not connected`);
         }
       },
       onChunkUploaded: (chunkIndex: number, s3Key: string, size: number) => {
@@ -1382,9 +1341,7 @@ export default function ChatPage() {
           socketService.sendVideoChunkUploaded(chunkIndex, s3Key, size);
           setVideoChunkCount((prev) => prev + 1);
         } else {
-          console.warn(
-            `[ChatPage] Cannot confirm chunk ${chunkIndex} - socket not connected`
-          );
+          console.warn(`[ChatPage] Cannot confirm chunk ${chunkIndex} - socket not connected`);
         }
       },
       onError: (chunkIndex: number, error: string) => {
@@ -1612,22 +1569,6 @@ export default function ChatPage() {
                 <Video className="h-4 w-4 text-slate-300" />
               )}
             </div>
-
-            {/* Screen share status */}
-            {isScreenShareActive && (
-              <div
-                className="flex items-center gap-1.5"
-                title="Screen sharing active - your screen is being monitored"
-              >
-                <div className="relative">
-                  <ScreenShare className="h-4 w-4 text-blue-500" />
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                </div>
-                <span className="text-xs font-medium text-blue-500">
-                  Sharing
-                </span>
-              </div>
-            )}
 
             {/* Connection status */}
             {isConnected ? (

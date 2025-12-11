@@ -31,11 +31,11 @@ const mockResponses = [
   "Hello! I'm here to help. What can I assist you with today?",
   "That's an interesting question. Let me think about that...",
   "I understand what you're asking. Here's what I can tell you:",
-  'Great point! Here are some thoughts on that topic.',
+  "Great point! Here are some thoughts on that topic.",
   "Thanks for sharing. Is there anything specific you'd like me to elaborate on?",
   "I'd be happy to help with that. Let me provide some information.",
   "That's a common question. Here's what you should know:",
-  'Interesting perspective! Let me add to that discussion.',
+  "Interesting perspective! Let me add to that discussion.",
 ];
 
 // Helper to generate mock response
@@ -61,10 +61,7 @@ export const chatApi = {
   },
 
   // Send a message and get a response
-  sendMessage: async (
-    sessionId: string,
-    content: string
-  ): Promise<ChatResponse> => {
+  sendMessage: async (sessionId: string, content: string): Promise<ChatResponse> => {
     // Mock implementation with simulated delay
     await delay(800 + Math.random() * 1200); // 800-2000ms delay
 
@@ -212,20 +209,14 @@ export const sessionApi = {
 
   // Get events for a session
   getSessionEvents: async (sessionId: string): Promise<SessionEvent[]> => {
-    const response = await api.get<SessionEvent[]>(
-      `/sessions/${sessionId}/events`
-    );
+    const response = await api.get<SessionEvent[]>(`/sessions/${sessionId}/events`);
     return response.data;
   },
 
   // Get typing analysis for a session
-  getTypingAnalysis: async (
-    sessionId: string
-  ): Promise<TypingAnalysis | null> => {
+  getTypingAnalysis: async (sessionId: string): Promise<TypingAnalysis | null> => {
     try {
-      const response = await api.get<TypingAnalysis>(
-        `/sessions/${sessionId}/typing-analysis`
-      );
+      const response = await api.get<TypingAnalysis>(`/sessions/${sessionId}/typing-analysis`);
       return response.data;
     } catch (error) {
       // Return null if no keystroke data exists
@@ -234,17 +225,12 @@ export const sessionApi = {
   },
 
   // Get video chunks with download URLs
-  getVideoChunks: async (
-    sessionId: string
-  ): Promise<VideoChunksResponse | null> => {
+  getVideoChunks: async (sessionId: string): Promise<VideoChunksResponse | null> => {
     try {
-      const response = await api.get<VideoChunksResponse>(
-        `/sessions/${sessionId}/video-chunks`
-      );
+      const response = await api.get<VideoChunksResponse>(`/sessions/${sessionId}/video-chunks`);
       // Convert relative URLs to full URLs
       // The API returns /api/sessions/... so we need the base without /api
-      const apiBase =
-        process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333/api';
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333/api';
       const baseUrl = apiBase.replace(/\/api\/?$/, ''); // Remove trailing /api
       if (response.data?.chunks) {
         response.data.chunks = response.data.chunks.map((chunk) => ({
@@ -268,16 +254,12 @@ export interface SystemConfig {
   _id: string;
   key: string;
   faceRecognitionEnabled: boolean;
-  screenShareEnabled: boolean;
-  multiDisplayCheckEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface UpdateConfigDto {
   faceRecognitionEnabled?: boolean;
-  screenShareEnabled?: boolean;
-  multiDisplayCheckEnabled?: boolean;
 }
 
 // Admin API functions
@@ -297,3 +279,4 @@ export const adminApi = {
 
 // Export the axios instance for future real API calls
 export default api;
+

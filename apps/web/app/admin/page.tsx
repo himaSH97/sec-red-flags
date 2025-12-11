@@ -3,24 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { adminApi, SystemConfig } from '@/lib/api';
-import {
-  Shield,
-  ArrowLeft,
-  Settings,
-  Scan,
-  Loader2,
-  ScreenShare,
-  Monitor,
-} from 'lucide-react';
+import { Shield, ArrowLeft, Settings, Scan, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminPage() {
@@ -50,9 +36,7 @@ export default function AdminPage() {
 
     setUpdating(true);
     try {
-      const updated = await adminApi.updateConfig({
-        faceRecognitionEnabled: enabled,
-      });
+      const updated = await adminApi.updateConfig({ faceRecognitionEnabled: enabled });
       setConfig(updated);
       toast.success(
         enabled ? 'Face recognition enabled' : 'Face recognition disabled',
@@ -60,58 +44,6 @@ export default function AdminPage() {
           description: enabled
             ? 'Users will need to verify their face to start a session.'
             : 'Users can start sessions without face verification.',
-        }
-      );
-    } catch (error) {
-      console.error('Failed to update config:', error);
-      toast.error('Failed to update configuration');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleToggleScreenShare = async (enabled: boolean) => {
-    if (!config) return;
-
-    setUpdating(true);
-    try {
-      const updated = await adminApi.updateConfig({
-        screenShareEnabled: enabled,
-      });
-      setConfig(updated);
-      toast.success(
-        enabled ? 'Screen sharing enabled' : 'Screen sharing disabled',
-        {
-          description: enabled
-            ? 'Users will need to share their screen during sessions.'
-            : 'Users can start sessions without screen sharing.',
-        }
-      );
-    } catch (error) {
-      console.error('Failed to update config:', error);
-      toast.error('Failed to update configuration');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleToggleMultiDisplayCheck = async (enabled: boolean) => {
-    if (!config) return;
-
-    setUpdating(true);
-    try {
-      const updated = await adminApi.updateConfig({
-        multiDisplayCheckEnabled: enabled,
-      });
-      setConfig(updated);
-      toast.success(
-        enabled
-          ? 'Multi-display check enabled'
-          : 'Multi-display check disabled',
-        {
-          description: enabled
-            ? 'Users will be required to have only one display connected.'
-            : 'Users can start sessions with multiple displays.',
         }
       );
     } catch (error) {
@@ -130,17 +62,11 @@ export default function AdminPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Shield className="h-6 w-6 text-slate-700" />
-              <span className="text-lg font-semibold text-slate-800">
-                SecFlags
-              </span>
+              <span className="text-lg font-semibold text-slate-800">SecFlags</span>
               <span className="text-slate-400">/</span>
               <span className="text-slate-600">Admin</span>
             </div>
-            <Button
-              variant="ghost"
-              onClick={() => router.push('/')}
-              className="gap-2"
-            >
+            <Button variant="ghost" onClick={() => router.push('/')} className="gap-2">
               <ArrowLeft className="h-4 w-4" />
               Back to Home
             </Button>
@@ -153,9 +79,7 @@ export default function AdminPage() {
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Settings className="h-8 w-8 text-slate-700" />
-            <h1 className="text-3xl font-bold text-slate-900">
-              System Settings
-            </h1>
+            <h1 className="text-3xl font-bold text-slate-900">System Settings</h1>
           </div>
           <p className="text-slate-600">
             Configure system-wide settings for the SecFlags application.
@@ -168,124 +92,6 @@ export default function AdminPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Multi-Display Check Card */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-slate-100 p-2">
-                    <Monitor className="h-5 w-5 text-slate-600" />
-                  </div>
-                  <div>
-                    <CardTitle>Multi-Display Check</CardTitle>
-                    <CardDescription>
-                      Control whether users are required to have only one
-                      display connected.
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      Enable Multi-Display Check
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      When enabled, users must have only one display connected
-                      to start a session.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {updating && (
-                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                    )}
-                    <Switch
-                      checked={config?.multiDisplayCheckEnabled ?? true}
-                      onCheckedChange={handleToggleMultiDisplayCheck}
-                      disabled={updating}
-                    />
-                  </div>
-                </div>
-
-                {/* Status indicator */}
-                <div className="mt-4 flex items-center gap-2">
-                  <div
-                    className={`h-2 w-2 rounded-full ${
-                      config?.multiDisplayCheckEnabled
-                        ? 'bg-green-500'
-                        : 'bg-amber-500'
-                    }`}
-                  />
-                  <span className="text-sm text-slate-600">
-                    Multi-display check is currently{' '}
-                    <span className="font-medium">
-                      {config?.multiDisplayCheckEnabled
-                        ? 'enabled'
-                        : 'disabled'}
-                    </span>
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Screen Sharing Card */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="rounded-lg bg-slate-100 p-2">
-                    <ScreenShare className="h-5 w-5 text-slate-600" />
-                  </div>
-                  <div>
-                    <CardTitle>Screen Sharing</CardTitle>
-                    <CardDescription>
-                      Control whether users are required to share their screen
-                      during sessions.
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      Enable Screen Sharing
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      When enabled, users must share their entire screen before
-                      starting a session.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {updating && (
-                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                    )}
-                    <Switch
-                      checked={config?.screenShareEnabled ?? true}
-                      onCheckedChange={handleToggleScreenShare}
-                      disabled={updating}
-                    />
-                  </div>
-                </div>
-
-                {/* Status indicator */}
-                <div className="mt-4 flex items-center gap-2">
-                  <div
-                    className={`h-2 w-2 rounded-full ${
-                      config?.screenShareEnabled
-                        ? 'bg-green-500'
-                        : 'bg-amber-500'
-                    }`}
-                  />
-                  <span className="text-sm text-slate-600">
-                    Screen sharing is currently{' '}
-                    <span className="font-medium">
-                      {config?.screenShareEnabled ? 'enabled' : 'disabled'}
-                    </span>
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Face Recognition Card */}
             <Card>
               <CardHeader>
@@ -296,8 +102,7 @@ export default function AdminPage() {
                   <div>
                     <CardTitle>Face Recognition</CardTitle>
                     <CardDescription>
-                      Control whether face verification is required for chat
-                      sessions.
+                      Control whether face verification is required for chat sessions.
                     </CardDescription>
                   </div>
                 </div>
@@ -305,18 +110,13 @@ export default function AdminPage() {
               <CardContent>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <div>
-                    <p className="font-medium text-slate-900">
-                      Enable Face Recognition
-                    </p>
+                    <p className="font-medium text-slate-900">Enable Face Recognition</p>
                     <p className="text-sm text-slate-500">
-                      When enabled, users must verify their face before starting
-                      a chat session.
+                      When enabled, users must verify their face before starting a chat session.
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
-                    {updating && (
-                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                    )}
+                    {updating && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
                     <Switch
                       checked={config?.faceRecognitionEnabled ?? true}
                       onCheckedChange={handleToggleFaceRecognition}
@@ -329,9 +129,7 @@ export default function AdminPage() {
                 <div className="mt-4 flex items-center gap-2">
                   <div
                     className={`h-2 w-2 rounded-full ${
-                      config?.faceRecognitionEnabled
-                        ? 'bg-green-500'
-                        : 'bg-amber-500'
+                      config?.faceRecognitionEnabled ? 'bg-green-500' : 'bg-amber-500'
                     }`}
                   />
                   <span className="text-sm text-slate-600">
@@ -349,3 +147,4 @@ export default function AdminPage() {
     </main>
   );
 }
+

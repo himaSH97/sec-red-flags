@@ -1,25 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { PreChatChecklist } from '@/components/ui/pre-chat-checklist';
+import { CameraModal } from '@/components/camera-modal';
 import { socketService } from '@/lib/socket';
-import { adminApi, SystemConfig } from '@/lib/api';
-import {
-  MessageSquare,
-  Shield,
-  Zap,
-  List,
-  Settings,
-  Loader2,
-} from 'lucide-react';
+import { adminApi } from '@/lib/api';
+import { MessageSquare, Shield, Zap, List, Settings, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Home() {
   const router = useRouter();
-  const [showChecklist, setShowChecklist] = useState(false);
-  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Fetch config on mount
@@ -27,58 +20,48 @@ export default function Home() {
     const loadConfig = async () => {
       try {
         const config = await adminApi.getConfig();
-        setSystemConfig(config);
+        setFaceRecognitionEnabled(config.faceRecognitionEnabled);
       } catch (error) {
         console.error('Failed to load config:', error);
-        // Default to all enabled if we can't fetch config
-        setSystemConfig({
-          _id: '',
-          key: 'system',
-          faceRecognitionEnabled: true,
-          screenShareEnabled: true,
-          multiDisplayCheckEnabled: true,
-          createdAt: '',
-          updatedAt: '',
-        });
+        // Default to enabled if we can't fetch config
+        setFaceRecognitionEnabled(true);
       }
     };
     loadConfig();
   }, []);
 
   const handleStartChat = () => {
-    console.log('Starting chat - showing pre-chat checklist...');
-    // Show the pre-chat checklist first
-    setShowChecklist(true);
+    console.log('Starting chat...');
+    
+    // If face recognition is disabled, go directly to chat
+    if (faceRecognitionEnabled === false) {
+      setIsLoading(true);
+      toast.success('Starting chat...', {
+        description: 'Face verification is disabled',
+        duration: 2000,
+      });
+      // Clear any existing reference face
+      sessionStorage.removeItem('referenceFace');
+      // Set a placeholder to indicate we're skipping face verification
+      sessionStorage.setItem('skipFaceVerification', 'true');
+      router.push('/chat');
+      return;
+    }
+    
+    setShowCameraModal(true);
   };
 
-  const handleChecklistComplete = (
-    cameraStream: MediaStream | null,
-    capturedFaceImage: string | null
-  ) => {
-    console.log('Pre-chat checks passed, proceeding to chat...');
-    setShowChecklist(false);
-    setIsLoading(true);
+  const handleFaceCapture = (imageBase64: string) => {
+    console.log('Face captured, storing and navigating...');
 
-    // Stop camera stream - chat page will create its own
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => track.stop());
-    }
-
-    // Store the captured face in sessionStorage for chat page
-    if (capturedFaceImage) {
-      sessionStorage.setItem('referenceFace', capturedFaceImage);
-      sessionStorage.removeItem('skipFaceVerification');
-    } else if (systemConfig?.faceRecognitionEnabled === false) {
-      // Face recognition is disabled
-      sessionStorage.removeItem('referenceFace');
-      sessionStorage.setItem('skipFaceVerification', 'true');
-    }
+    // Store the captured face in sessionStorage
+    sessionStorage.setItem('referenceFace', imageBase64);
 
     // Disconnect any existing connection (chat page will create new one)
     socketService.disconnect();
 
     // Show toast and navigate
-    toast.success('All checks passed!', {
+    toast.success('Face captured!', {
       description: 'Connecting to chat...',
       duration: 2000,
     });
@@ -151,10 +134,10 @@ export default function Home() {
           <Button
             onClick={handleStartChat}
             size="lg"
-            disabled={isLoading || systemConfig === null}
+            disabled={isLoading || faceRecognitionEnabled === null}
             className="h-12 px-8 text-base font-medium shadow-lg shadow-slate-200 transition-all hover:shadow-xl hover:shadow-slate-300"
           >
-            {isLoading || systemConfig === null ? (
+            {isLoading || faceRecognitionEnabled === null ? (
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             ) : (
               <MessageSquare className="mr-2 h-5 w-5" />
@@ -195,16 +178,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Pre-Chat Checklist Modal */}
-      <PreChatChecklist
-        open={showChecklist}
-        onOpenChange={setShowChecklist}
-        onComplete={handleChecklistComplete}
-        config={{
-          multiDisplayCheckEnabled: systemConfig?.multiDisplayCheckEnabled,
-          screenShareEnabled: systemConfig?.screenShareEnabled,
-          faceRecognitionEnabled: systemConfig?.faceRecognitionEnabled,
-        }}
+      {/* Camera Modal */}
+      <CameraModal
+        open={showCameraModal}
+        onOpenChange={setShowCameraModal}
+        onCapture={handleFaceCapture}
       />
     </main>
   );

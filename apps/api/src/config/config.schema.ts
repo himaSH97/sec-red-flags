@@ -11,12 +11,6 @@ export class SystemConfig {
   @Prop({ required: true, default: true })
   faceRecognitionEnabled: boolean;
 
-  @Prop({ required: true, default: true })
-  screenShareEnabled: boolean;
-
-  @Prop({ required: true, default: true })
-  multiDisplayCheckEnabled: boolean;
-
   @Prop()
   createdAt: Date;
 
@@ -25,3 +19,4 @@ export class SystemConfig {
 }
 
 export const SystemConfigSchema = SchemaFactory.createForClass(SystemConfig);
+
