@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { CameraModal } from '@/components/camera-modal';
+import { PreChatChecklistModal } from '@/components/pre-chat-checklist-modal';
 import { socketService } from '@/lib/socket';
 import { adminApi } from '@/lib/api';
 import { MessageSquare, Shield, Zap, List, Settings, Loader2 } from 'lucide-react';
@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 
 export default function Home() {
   const router = useRouter();
-  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [showChecklistModal, setShowChecklistModal] = useState(false);
   const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -48,20 +48,24 @@ export default function Home() {
       return;
     }
     
-    setShowCameraModal(true);
+    // Show the checklist modal
+    setShowChecklistModal(true);
   };
 
-  const handleFaceCapture = (imageBase64: string) => {
-    console.log('Face captured, storing and navigating...');
+  const handleChecklistComplete = (capturedFace: string) => {
+    console.log('Checklist complete, storing face and navigating...');
 
     // Store the captured face in sessionStorage
-    sessionStorage.setItem('referenceFace', imageBase64);
+    sessionStorage.setItem('referenceFace', capturedFace);
 
     // Disconnect any existing connection (chat page will create new one)
     socketService.disconnect();
 
+    // Close the modal
+    setShowChecklistModal(false);
+
     // Show toast and navigate
-    toast.success('Face captured!', {
+    toast.success('All checks passed!', {
       description: 'Connecting to chat...',
       duration: 2000,
     });
@@ -178,11 +182,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Camera Modal */}
-      <CameraModal
-        open={showCameraModal}
-        onOpenChange={setShowCameraModal}
-        onCapture={handleFaceCapture}
+      {/* Pre-Chat Checklist Modal */}
+      <PreChatChecklistModal
+        open={showChecklistModal}
+        onOpenChange={setShowChecklistModal}
+        onComplete={handleChecklistComplete}
       />
     </main>
   );
