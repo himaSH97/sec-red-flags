@@ -1,54 +1,21 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { PreChatChecklistModal } from '@/components/pre-chat-checklist-modal';
 import { socketService } from '@/lib/socket';
-import { adminApi } from '@/lib/api';
-import { MessageSquare, Shield, Zap, List, Settings, Loader2 } from 'lucide-react';
+import { MessageSquare, Shield, Zap, List, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Home() {
   const router = useRouter();
   const [showChecklistModal, setShowChecklistModal] = useState(false);
-  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState<boolean | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Fetch config on mount
-  useEffect(() => {
-    const loadConfig = async () => {
-      try {
-        const config = await adminApi.getConfig();
-        setFaceRecognitionEnabled(config.faceRecognitionEnabled);
-      } catch (error) {
-        console.error('Failed to load config:', error);
-        // Default to enabled if we can't fetch config
-        setFaceRecognitionEnabled(true);
-      }
-    };
-    loadConfig();
-  }, []);
 
   const handleStartChat = () => {
     console.log('Starting chat...');
-    
-    // If face recognition is disabled, go directly to chat
-    if (faceRecognitionEnabled === false) {
-      setIsLoading(true);
-      toast.success('Starting chat...', {
-        description: 'Face verification is disabled',
-        duration: 2000,
-      });
-      // Clear any existing reference face
-      sessionStorage.removeItem('referenceFace');
-      // Set a placeholder to indicate we're skipping face verification
-      sessionStorage.setItem('skipFaceVerification', 'true');
-      router.push('/chat');
-      return;
-    }
-    
-    // Show the checklist modal
+    // Always show the checklist modal - the toggle only affects face verification API,
+    // not the pre-chat checks (display, screen share, camera)
     setShowChecklistModal(true);
   };
 
@@ -73,13 +40,6 @@ export default function Home() {
     // Navigate to chat page
     router.push('/chat');
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      // Clean up socket if navigating away
-    };
-  }, []);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
@@ -138,15 +98,10 @@ export default function Home() {
           <Button
             onClick={handleStartChat}
             size="lg"
-            disabled={isLoading || faceRecognitionEnabled === null}
             className="h-12 px-8 text-base font-medium shadow-lg shadow-slate-200 transition-all hover:shadow-xl hover:shadow-slate-300"
           >
-            {isLoading || faceRecognitionEnabled === null ? (
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            ) : (
-              <MessageSquare className="mr-2 h-5 w-5" />
-            )}
-            {isLoading ? 'Connecting...' : 'Start Chat'}
+            <MessageSquare className="mr-2 h-5 w-5" />
+            Start Chat
           </Button>
 
           {/* Features */}

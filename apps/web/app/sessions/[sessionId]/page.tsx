@@ -605,6 +605,7 @@ export default function SessionDetailPage() {
                   <SessionTimeline
                     events={events}
                     sessionStart={session.createdAt}
+                    sessionEnd={session.updatedAt}
                     onEventSelect={handleEventSelect}
                     selectedEventId={selectedEventId || undefined}
                     currentTimeMs={sessionTimeMs}
@@ -677,6 +678,7 @@ export default function SessionDetailPage() {
                   <SessionTimeline
                     events={events}
                     sessionStart={session.createdAt}
+                    sessionEnd={session.updatedAt}
                     onEventSelect={handleEventSelect}
                     selectedEventId={selectedEventId || undefined}
                   />

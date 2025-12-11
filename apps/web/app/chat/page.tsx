@@ -899,20 +899,13 @@ export default function ChatPage() {
     if (!hasCheckedEntryRef.current) {
       hasCheckedEntryRef.current = true;
       
-      // Check if we have a reference face or if face verification is skipped
+      // Check if we have a reference face (required from pre-chat checklist)
       const referenceFace = sessionStorage.getItem('referenceFace');
-      const skipFaceVerification = sessionStorage.getItem('skipFaceVerification');
       
-      if (!referenceFace && !skipFaceVerification) {
-        console.log('No reference face found and face verification not skipped, redirecting to home');
+      if (!referenceFace) {
+        console.log('No reference face found, redirecting to home');
         router.push('/');
         return;
-      }
-      
-      // Clear the skip flag after reading
-      if (skipFaceVerification) {
-        sessionStorage.removeItem('skipFaceVerification');
-        console.log('Face verification skipped by admin config');
       }
     }
 

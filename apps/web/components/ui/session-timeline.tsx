@@ -249,22 +249,32 @@ export const SessionTimeline: React.FC<SessionTimelineProps> = ({
 
   // Calculate end time if not provided
   const computedEndTime = useMemo(() => {
-    // If video duration is provided, use it for the end time
-    if (videoDurationMs) {
-      return new Date(
-        new Date(sessionStart).getTime() + videoDurationMs
-      ).toISOString();
+    const startMs = new Date(sessionStart).getTime();
+    
+    // If sessionEnd is provided, use it as the primary source of truth
+    if (sessionEnd) {
+      const sessionEndMs = new Date(sessionEnd).getTime();
+      // Only use sessionEnd if it's actually after sessionStart
+      if (sessionEndMs > startMs) {
+        return sessionEnd;
+      }
     }
-    if (sessionEnd) return sessionEnd;
-    if (events.length === 0) {
-      // Default to 1 minute after start
-      return new Date(new Date(sessionStart).getTime() + 60000).toISOString();
+    
+    // Fall back to video duration if provided
+    if (videoDurationMs && videoDurationMs > 0) {
+      return new Date(startMs + videoDurationMs).toISOString();
     }
-    // Use the last event time + a small buffer
-    const lastEventTime = Math.max(
-      ...events.map((e) => new Date(e.timestamp).getTime())
-    );
-    return new Date(lastEventTime + 5000).toISOString();
+    
+    // Fall back to last event time
+    if (events.length > 0) {
+      const lastEventTime = Math.max(
+        ...events.map((e) => new Date(e.timestamp).getTime())
+      );
+      return new Date(lastEventTime + 2000).toISOString();
+    }
+    
+    // Default to 10 seconds after start (shorter default for empty sessions)
+    return new Date(startMs + 10000).toISOString();
   }, [sessionEnd, events, sessionStart, videoDurationMs]);
 
   const totalDuration = useMemo(() => {
