@@ -13,9 +13,16 @@ async function bootstrap() {
   
   // Enable CORS for WebSocket handshake and HTTP requests
   app.enableCors({
-    origin: '*',
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:4200',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:4200',
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Range'],
+    exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
   });
   
   // Use Socket.IO adapter for WebSockets

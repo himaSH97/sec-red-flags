@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Query, Res, NotFoundException, StreamableFile, Header } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Res,
+  NotFoundException,
+  StreamableFile,
+  Header,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { SessionService } from './session.service';
 import { KeystrokeAnalyticsService } from '../keystroke/keystroke-analytics.service';
@@ -9,7 +18,7 @@ export class SessionController {
   constructor(
     private readonly sessionService: SessionService,
     private readonly keystrokeAnalyticsService: KeystrokeAnalyticsService,
-    private readonly s3Service: S3Service,
+    private readonly s3Service: S3Service
   ) {}
 
   /**
@@ -17,10 +26,7 @@ export class SessionController {
    * GET /sessions?page=1&limit=10
    */
   @Get()
-  async getSessions(
-    @Query('page') page = '1',
-    @Query('limit') limit = '10',
-  ) {
+  async getSessions(@Query('page') page = '1', @Query('limit') limit = '10') {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
 
@@ -51,12 +57,16 @@ export class SessionController {
    */
   @Get(':sessionId/typing-analysis')
   async getTypingAnalysis(@Param('sessionId') sessionId: string) {
-    const analysis = await this.keystrokeAnalyticsService.analyzeSession(sessionId);
-    
+    const analysis = await this.keystrokeAnalyticsService.analyzeSession(
+      sessionId
+    );
+
     if (!analysis) {
-      throw new NotFoundException(`No keystroke data found for session ${sessionId}`);
+      throw new NotFoundException(
+        `No keystroke data found for session ${sessionId}`
+      );
     }
-    
+
     return analysis;
   }
 
@@ -67,14 +77,14 @@ export class SessionController {
   @Get(':sessionId/video-chunks')
   async getVideoChunks(@Param('sessionId') sessionId: string) {
     const session = await this.sessionService.getSessionById(sessionId);
-    
+
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
 
     // Get chunks from session metadata
     const chunks = await this.sessionService.getVideoChunks(sessionId);
-    
+
     if (!chunks || chunks.length === 0) {
       return {
         sessionId,
@@ -118,13 +128,14 @@ export class SessionController {
    */
   @Get(':sessionId/video/:chunkIndex')
   @Header('Accept-Ranges', 'bytes')
+  @Header('Access-Control-Allow-Origin', '*')
   async streamVideoChunk(
     @Param('sessionId') sessionId: string,
     @Param('chunkIndex') chunkIndex: string,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: Response
   ): Promise<StreamableFile> {
     const session = await this.sessionService.getSessionById(sessionId);
-    
+
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
@@ -138,14 +149,18 @@ export class SessionController {
     }
 
     try {
-      const { stream, contentType, contentLength } = await this.s3Service.getVideoChunkStream(chunk.s3Key);
-      
+      const { stream, contentType, contentLength } =
+        await this.s3Service.getVideoChunkStream(chunk.s3Key);
+
       res.set({
         'Content-Type': contentType,
         'Content-Disposition': `inline; filename="chunk-${chunkIndex}.webm"`,
         'Cache-Control': 'public, max-age=86400', // Cache for 1 day
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers':
+          'Content-Length, Content-Range, Accept-Ranges',
       });
-      
+
       if (contentLength) {
         res.set('Content-Length', contentLength.toString());
       }
@@ -153,8 +168,9 @@ export class SessionController {
       return new StreamableFile(stream as any);
     } catch (error) {
       console.error(`Failed to stream video chunk ${chunkIndex}:`, error);
-      throw new NotFoundException(`Failed to retrieve video chunk ${chunkIndex}`);
+      throw new NotFoundException(
+        `Failed to retrieve video chunk ${chunkIndex}`
+      );
     }
   }
 }
-

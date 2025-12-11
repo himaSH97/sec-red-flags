@@ -22,14 +22,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { VideoChunk } from '@/lib/api';
+import { VideoPlayerService, VideoPlayerStatus } from '@/lib/video-player';
 
-export type VideoPlayerStatus =
-  | 'idle'
-  | 'loading'
-  | 'ready'
-  | 'playing'
-  | 'paused'
-  | 'error';
+export type { VideoPlayerStatus };
 
 export interface VideoPlayerRef {
   seekTo: (timeMs: number) => void;
@@ -67,6 +62,26 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
   ) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const playerServiceRef = useRef<VideoPlayerService | null>(null);
+    const isInitializedRef = useRef(false);
+
+    // Store callbacks in refs to avoid triggering effect re-runs
+    const onTimeUpdateRef = useRef(onTimeUpdate);
+    const onStatusChangeRef = useRef(onStatusChange);
+    const onReadyRef = useRef(onReady);
+
+    // Update refs when callbacks change
+    useEffect(() => {
+      onTimeUpdateRef.current = onTimeUpdate;
+    }, [onTimeUpdate]);
+
+    useEffect(() => {
+      onStatusChangeRef.current = onStatusChange;
+    }, [onStatusChange]);
+
+    useEffect(() => {
+      onReadyRef.current = onReady;
+    }, [onReady]);
 
     const [status, setStatus] = useState<VideoPlayerStatus>('idle');
     const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -74,125 +89,103 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
     const [isMuted, setIsMuted] = useState(true);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
+    const [loadedChunks, setLoadedChunks] = useState(0);
+    const [totalChunks, setTotalChunks] = useState(0);
+    const [loadingProgress, setLoadingProgress] = useState(0);
 
-    // Update status helper
-    const updateStatus = useCallback((newStatus: VideoPlayerStatus) => {
-      setStatus(newStatus);
-      onStatusChange?.(newStatus);
-      if (newStatus === 'ready') {
-        onReady?.();
-      }
-    }, [onStatusChange, onReady]);
+    // Create a stable key from chunks to detect when they actually change
+    const chunksKey = chunks.length > 0 ? `${chunks[0].downloadUrl}-${chunks.length}` : '';
 
-    // Load video when chunks change
+    // Initialize player service when video element is available
     useEffect(() => {
       if (!videoRef.current || chunks.length === 0) {
-        console.log('[VideoPlayer] No video ref or chunks');
         return;
       }
 
-      const video = videoRef.current;
-      const url = chunks[0].downloadUrl;
-      
-      console.log('[VideoPlayer] Setting video source:', url);
-      updateStatus('loading');
+      // Prevent double initialization
+      if (isInitializedRef.current && playerServiceRef.current) {
+        return;
+      }
 
-      // Set up event handlers
-      const handleLoadedData = () => {
-        console.log('[VideoPlayer] Video loaded successfully');
-        updateStatus('ready');
-        if (video.duration) {
-          setDurationMs(video.duration * 1000);
-        }
-      };
+      isInitializedRef.current = true;
 
-      const handleCanPlay = () => {
-        console.log('[VideoPlayer] Video can play');
-        if (status === 'loading') {
-          updateStatus('ready');
-        }
-      };
+      // Create a new player service instance for this component
+      const playerService = new VideoPlayerService();
+      playerServiceRef.current = playerService;
 
-      const handleError = () => {
-        console.error('[VideoPlayer] Video error:', video.error);
-        setError(video.error?.message || 'Failed to load video');
-        updateStatus('error');
-      };
+      // Initialize with callbacks
+      playerService.initialize(
+        videoRef.current,
+        {
+          onStatusChange: (newStatus) => {
+            setStatus(newStatus);
+            onStatusChangeRef.current?.(newStatus);
+            if (newStatus === 'ready') {
+              onReadyRef.current?.();
+            }
+          },
+          onTimeUpdate: (timeMs) => {
+            setCurrentTimeMs(timeMs);
+            onTimeUpdateRef.current?.(timeMs);
+          },
+          onDurationChange: (duration) => {
+            setDurationMs(duration);
+          },
+          onError: (errorMsg) => {
+            setError(errorMsg);
+          },
+          onChunkLoaded: (loaded, total) => {
+            setLoadedChunks(loaded);
+            setTotalChunks(total);
+          },
+          onLoadingProgress: (progress) => {
+            setLoadingProgress(progress);
+          },
+        },
+        { chunkDurationMs }
+      );
 
-      const handleTimeUpdate = () => {
-        const timeMs = video.currentTime * 1000;
-        setCurrentTimeMs(timeMs);
-        onTimeUpdate?.(timeMs);
-      };
+      // Load the chunks
+      playerService.load(
+        chunks,
+        videoStartTime,
+        totalDurationMs
+      );
 
-      const handlePlay = () => updateStatus('playing');
-      const handlePause = () => updateStatus('paused');
-
-      video.addEventListener('loadeddata', handleLoadedData);
-      video.addEventListener('canplay', handleCanPlay);
-      video.addEventListener('error', handleError);
-      video.addEventListener('timeupdate', handleTimeUpdate);
-      video.addEventListener('play', handlePlay);
-      video.addEventListener('pause', handlePause);
-
-      // Set the source
-      video.src = url;
-      video.load();
-
+      // Cleanup on unmount
       return () => {
-        video.removeEventListener('loadeddata', handleLoadedData);
-        video.removeEventListener('canplay', handleCanPlay);
-        video.removeEventListener('error', handleError);
-        video.removeEventListener('timeupdate', handleTimeUpdate);
-        video.removeEventListener('play', handlePlay);
-        video.removeEventListener('pause', handlePause);
+        isInitializedRef.current = false;
+        playerService.destroy();
+        playerServiceRef.current = null;
       };
-    }, [chunks, updateStatus, onTimeUpdate, status]);
+    // Only re-run when chunks actually change (using stable key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chunksKey]);
 
     // Expose methods via ref
     useImperativeHandle(
       ref,
       () => ({
         seekTo: (timeMs: number) => {
-          if (videoRef.current) {
-            // Calculate which chunk this time falls into
-            const chunkIndex = Math.floor(timeMs / chunkDurationMs);
-            const timeWithinChunk = timeMs % chunkDurationMs;
-            
-            if (chunkIndex !== currentChunkIndex && chunkIndex < chunks.length) {
-              // Need to load a different chunk
-              setCurrentChunkIndex(chunkIndex);
-              videoRef.current.src = chunks[chunkIndex].downloadUrl;
-              videoRef.current.currentTime = timeWithinChunk / 1000;
-            } else {
-              // Same chunk, just seek
-              videoRef.current.currentTime = timeMs / 1000;
-            }
-          }
+          playerServiceRef.current?.seekTo(timeMs);
         },
         seekToTimestamp: (timestamp: Date) => {
-          if (videoStartTime && videoRef.current) {
-            const offsetMs = timestamp.getTime() - videoStartTime.getTime();
-            if (offsetMs >= 0) {
-              videoRef.current.currentTime = offsetMs / 1000;
-            }
-          }
+          playerServiceRef.current?.seekToTimestamp(timestamp);
         },
         play: () => {
-          videoRef.current?.play();
+          playerServiceRef.current?.play();
         },
         pause: () => {
-          videoRef.current?.pause();
+          playerServiceRef.current?.pause();
         },
         getCurrentTimeMs: () => {
-          return (videoRef.current?.currentTime || 0) * 1000;
+          return playerServiceRef.current?.getCurrentTimeMs() || 0;
         },
         isReady: () => {
-          return status === 'ready' || status === 'playing' || status === 'paused';
+          return playerServiceRef.current?.isReady() || false;
         },
       }),
-      [chunkDurationMs, chunks, currentChunkIndex, status, videoStartTime]
+      []
     );
 
     // Format time for display
@@ -212,12 +205,12 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
     // Handle play/pause toggle
     const togglePlayPause = useCallback(() => {
-      if (!videoRef.current) return;
+      if (!playerServiceRef.current) return;
 
       if (status === 'playing') {
-        videoRef.current.pause();
+        playerServiceRef.current.pause();
       } else {
-        videoRef.current.play();
+        playerServiceRef.current.play();
       }
     }, [status]);
 
@@ -245,32 +238,28 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
     // Handle progress bar click
     const handleProgressClick = useCallback(
       (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!videoRef.current || durationMs === 0) return;
+        if (!playerServiceRef.current || durationMs === 0) return;
 
         const rect = e.currentTarget.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
-        const targetTime = percent * durationMs / 1000;
-        videoRef.current.currentTime = targetTime;
+        const targetTimeMs = percent * durationMs;
+        playerServiceRef.current.seekTo(targetTimeMs);
       },
       [durationMs]
     );
 
     // Skip forward/back
     const skipForward = useCallback(() => {
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.min(
-          videoRef.current.currentTime + 5,
-          videoRef.current.duration || 0
-        );
+      if (playerServiceRef.current) {
+        const currentTime = playerServiceRef.current.getCurrentTimeMs();
+        playerServiceRef.current.seekTo(currentTime + 5000);
       }
     }, []);
 
     const skipBack = useCallback(() => {
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.max(
-          videoRef.current.currentTime - 5,
-          0
-        );
+      if (playerServiceRef.current) {
+        const currentTime = playerServiceRef.current.getCurrentTimeMs();
+        playerServiceRef.current.seekTo(Math.max(0, currentTime - 5000));
       }
     }, []);
 
@@ -286,7 +275,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
       };
     }, []);
 
-    // Progress percentage
+    // Progress percentage for playback
     const progressPercent = durationMs > 0 ? (currentTimeMs / durationMs) * 100 : 0;
 
     // Render empty state if no chunks
@@ -328,6 +317,20 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
             <Loader2 className="h-10 w-10 text-white animate-spin mb-3" />
             <p className="text-white text-sm mb-2">Loading video...</p>
+            {totalChunks > 1 && (
+              <>
+                <p className="text-white/70 text-xs mb-2">
+                  Loading chunk {loadedChunks + 1} of {totalChunks}
+                </p>
+                {/* Loading progress bar */}
+                <div className="w-48 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-blue-500 transition-all duration-300"
+                    style={{ width: `${loadingProgress * 100}%` }}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -366,6 +369,16 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
           {/* Bottom Controls */}
           <div className="absolute bottom-0 left-0 right-0 p-4">
+            {/* Buffer progress indicator (shows how much is loaded) */}
+            {totalChunks > 1 && loadedChunks < totalChunks && (
+              <div className="w-full h-0.5 bg-white/10 rounded-full mb-1">
+                <div 
+                  className="h-full bg-white/30 rounded-full transition-all duration-300"
+                  style={{ width: `${loadingProgress * 100}%` }}
+                />
+              </div>
+            )}
+
             {/* Progress Bar */}
             <div
               className="w-full h-1.5 bg-white/30 rounded-full mb-3 cursor-pointer group/progress"
@@ -439,10 +452,14 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
               {/* Right Controls */}
               <div className="flex items-center gap-2">
-                {/* Chunk indicator */}
-                {chunks.length > 1 && (
+                {/* Chunk loading indicator */}
+                {totalChunks > 1 && (
                   <span className="text-white/60 text-xs">
-                    Chunk {currentChunkIndex + 1}/{chunks.length}
+                    {loadedChunks < totalChunks ? (
+                      `Loading ${loadedChunks}/${totalChunks}`
+                    ) : (
+                      `${totalChunks} chunks`
+                    )}
                   </span>
                 )}
 

@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SessionTimeline } from '@/components/ui/session-timeline';
-import { sessionApi, Session, SessionEvent, TypingAnalysis } from '@/lib/api';
+import { VideoPlayer, VideoPlayerRef } from '@/components/ui/video-player';
+import { sessionApi, Session, SessionEvent, TypingAnalysis, VideoChunksResponse } from '@/lib/api';
 import {
   getEventSeverity,
   getSeverityColors,
@@ -35,6 +36,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Video,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -56,6 +58,26 @@ const formatTime = (dateStr: string) => {
     second: '2-digit',
     hour12: false,
   });
+};
+
+const formatDuration = (startDate: string, endDate: string | null) => {
+  const start = new Date(startDate).getTime();
+  const end = endDate ? new Date(endDate).getTime() : Date.now();
+  const durationMs = end - start;
+  
+  if (durationMs < 0) return '0s';
+  
+  const seconds = Math.floor(durationMs / 1000) % 60;
+  const minutes = Math.floor(durationMs / (1000 * 60)) % 60;
+  const hours = Math.floor(durationMs / (1000 * 60 * 60));
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  } else {
+    return `${seconds}s`;
+  }
 };
 
 // Event type to icon/color mapping
@@ -120,6 +142,7 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [typingAnalysis, setTypingAnalysis] = useState<TypingAnalysis | null>(null);
+  const [videoData, setVideoData] = useState<VideoChunksResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -128,6 +151,7 @@ export default function SessionDetailPage() {
   const [filterSeverity, setFilterSeverity] = useState<string | null>(null);
   
   const eventListRef = useRef<HTMLDivElement>(null);
+  const videoPlayerRef = useRef<VideoPlayerRef>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -137,10 +161,11 @@ export default function SessionDetailPage() {
       setError(null);
       
       try {
-        const [sessionData, eventsData, analysisData] = await Promise.all([
+        const [sessionData, eventsData, analysisData, videoChunksData] = await Promise.all([
           sessionApi.getSession(sessionId),
           sessionApi.getSessionEvents(sessionId),
           sessionApi.getTypingAnalysis(sessionId),
+          sessionApi.getVideoChunks(sessionId),
         ]);
         
         setSession(sessionData);
@@ -149,6 +174,7 @@ export default function SessionDetailPage() {
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         ));
         setTypingAnalysis(analysisData);
+        setVideoData(videoChunksData);
       } catch (err) {
         console.error('Failed to fetch session data:', err);
         setError('Failed to load session data. Make sure the API server is running.');
@@ -218,7 +244,39 @@ export default function SessionDetailPage() {
   const handleEventListClick = useCallback((event: SessionEvent) => {
     setSelectedEventId(event._id);
     setSelectedTime(new Date(event.timestamp));
-  }, []);
+    
+    // Seek video to the event timestamp
+    if (videoPlayerRef.current && videoData?.videoStartedAt) {
+      const eventTime = new Date(event.timestamp);
+      videoPlayerRef.current.seekToTimestamp(eventTime);
+    }
+  }, [videoData?.videoStartedAt]);
+
+  // Handle video time update - find corresponding event
+  const handleVideoTimeUpdate = useCallback((timeMs: number) => {
+    if (!videoData?.videoStartedAt || events.length === 0) return;
+    
+    const videoStartMs = new Date(videoData.videoStartedAt).getTime();
+    const currentVideoTimeMs = videoStartMs + timeMs;
+    
+    // Find the closest event to the current video time
+    let closestEvent: SessionEvent | null = null;
+    let closestDiff = Infinity;
+    
+    for (const event of events) {
+      const eventMs = new Date(event.timestamp).getTime();
+      const diff = Math.abs(eventMs - currentVideoTimeMs);
+      if (diff < closestDiff && diff < 2000) { // Within 2 seconds
+        closestDiff = diff;
+        closestEvent = event;
+      }
+    }
+    
+    if (closestEvent && closestEvent._id !== selectedEventId) {
+      // Don't auto-select, just update the time indicator
+      setSelectedTime(new Date(currentVideoTimeMs));
+    }
+  }, [events, videoData?.videoStartedAt, selectedEventId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-zinc-100">
@@ -328,7 +386,64 @@ export default function SessionDetailPage() {
                         </p>
                       </div>
                     </div>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100">
+                        <Timer className="h-4 w-4 text-slate-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                          Duration
+                        </p>
+                        <p className="text-sm text-slate-700">
+                          {formatDuration(session.createdAt, session.updatedAt)}
+                        </p>
+                      </div>
+                    </div>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Video Recording Card */}
+            {videoData && videoData.chunks.length > 0 && (
+              <Card className="border-slate-200/80 bg-white/80 backdrop-blur-sm">
+                <CardHeader className="pb-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                      <Video className="h-5 w-5" />
+                      Session Recording
+                    </CardTitle>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span
+                        className={cn(
+                          'px-2 py-0.5 rounded-full font-medium',
+                          videoData.videoStatus === 'completed' && 'bg-emerald-100 text-emerald-700',
+                          videoData.videoStatus === 'recording' && 'bg-blue-100 text-blue-700',
+                          videoData.videoStatus === 'failed' && 'bg-red-100 text-red-700',
+                          videoData.videoStatus === 'idle' && 'bg-slate-100 text-slate-600'
+                        )}
+                      >
+                        {videoData.videoStatus}
+                      </span>
+                      <span>{videoData.chunks.length} chunks</span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <VideoPlayer
+                    ref={videoPlayerRef}
+                    chunks={videoData.chunks}
+                    videoStartTime={videoData.videoStartedAt ? new Date(videoData.videoStartedAt) : undefined}
+                    totalDurationMs={videoData.totalDurationMs}
+                    chunkDurationMs={videoData.chunkDurationMs}
+                    onTimeUpdate={handleVideoTimeUpdate}
+                    className="rounded-lg overflow-hidden"
+                  />
+                  {videoData.videoStartedAt && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Recording started: {formatDate(videoData.videoStartedAt)}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             )}
