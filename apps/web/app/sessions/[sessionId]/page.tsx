@@ -238,7 +238,7 @@ export default function SessionDetailPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(true);
   const [filterSeverity, setFilterSeverity] = useState<string | null>(null);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
 
   const eventListRef = useRef<HTMLDivElement>(null);
   const lastAutoScrolledEventRef = useRef<string | null>(null);
