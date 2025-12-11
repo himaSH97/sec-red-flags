@@ -6,6 +6,7 @@ import {
   isDisplayCheckSupported,
   DisplayCheckResult,
 } from '@/lib/display-check';
+import { screenShareService } from '@/lib/screen-share';
 
 export type CheckStatus = 'pending' | 'checking' | 'passed' | 'failed';
 
@@ -47,6 +48,12 @@ const INITIAL_ITEMS: ChecklistItem[] = [
     id: 'camera-access',
     label: 'Camera Access',
     description: 'Grant permission for face tracking',
+    status: 'pending',
+  },
+  {
+    id: 'screen-share',
+    label: 'Screen Share',
+    description: 'Share your screen for session monitoring',
     status: 'pending',
   },
 ];
@@ -188,6 +195,43 @@ export function usePreChatChecks(): PreChatChecksResult {
   }, [updateItem]);
 
   /**
+   * Check for screen share permission
+   */
+  const checkScreenShare = useCallback(async (): Promise<boolean> => {
+    updateItem('screen-share', {
+      status: 'checking',
+      errorMessage: undefined,
+    });
+
+    try {
+      await screenShareService.startSharing();
+      updateItem('screen-share', { status: 'passed' });
+      return true;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+
+      let userMessage = 'Screen sharing was cancelled';
+      if (
+        errorMessage.includes('NotAllowedError') ||
+        errorMessage.includes('Permission denied')
+      ) {
+        userMessage =
+          'Screen sharing permission denied. Please allow screen sharing to continue.';
+      } else if (errorMessage.includes('AbortError')) {
+        userMessage =
+          'Screen sharing was cancelled. Please select a screen to share.';
+      }
+
+      updateItem('screen-share', {
+        status: 'failed',
+        errorMessage: userMessage,
+      });
+      return false;
+    }
+  }, [updateItem]);
+
+  /**
    * Run all checks sequentially
    */
   const runAllChecks = useCallback(async () => {
@@ -200,12 +244,17 @@ export function usePreChatChecks(): PreChatChecksResult {
     await new Promise((r) => setTimeout(r, 300));
 
     if (displayPassed) {
-      await checkCameraAccess();
+      const cameraPassed = await checkCameraAccess();
+      await new Promise((r) => setTimeout(r, 300));
+
+      if (cameraPassed) {
+        await checkScreenShare();
+      }
     }
 
     setIsChecking(false);
     isRunningRef.current = false;
-  }, [checkSingleDisplay, checkCameraAccess]);
+  }, [checkSingleDisplay, checkCameraAccess, checkScreenShare]);
 
   /**
    * Retry a specific check
@@ -223,12 +272,15 @@ export function usePreChatChecks(): PreChatChecksResult {
         case 'camera-access':
           await checkCameraAccess();
           break;
+        case 'screen-share':
+          await checkScreenShare();
+          break;
       }
 
       setIsChecking(false);
       isRunningRef.current = false;
     },
-    [checkSingleDisplay, checkCameraAccess]
+    [checkSingleDisplay, checkCameraAccess, checkScreenShare]
   );
 
   /**
@@ -241,6 +293,9 @@ export function usePreChatChecks(): PreChatChecksResult {
       cameraStreamRef.current = null;
       setCameraStream(null);
     }
+
+    // Stop screen sharing if active
+    screenShareService.stopSharing();
 
     setItems(INITIAL_ITEMS);
     setDisplayCheckResult(null);

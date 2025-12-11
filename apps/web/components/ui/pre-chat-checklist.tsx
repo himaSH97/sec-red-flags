@@ -24,6 +24,7 @@ import {
   RefreshCw,
   ArrowRight,
   Shield,
+  ScreenShare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +43,8 @@ function getItemIcon(id: string) {
       return Monitor;
     case 'camera-access':
       return Camera;
+    case 'screen-share':
+      return ScreenShare;
     default:
       return Shield;
   }
