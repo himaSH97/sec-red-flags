@@ -14,7 +14,6 @@ import { FaceService } from '../face/face.service';
 import { SessionService } from '../session/session.service';
 import { KeystrokeService } from '../keystroke/keystroke.service';
 import { S3Service } from '../s3/s3.service';
-import { SystemConfigService } from '../config';
 import {
   FaceTrackingEventPayload,
   FaceTrackingEventType,
@@ -86,8 +85,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly faceService: FaceService,
     private readonly sessionService: SessionService,
     private readonly keystrokeService: KeystrokeService,
-    private readonly s3Service: S3Service,
-    private readonly systemConfigService: SystemConfigService
+    private readonly s3Service: S3Service
   ) {}
 
   async handleConnection(client: Socket) {
@@ -105,17 +103,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(`Failed to create DB session: ${error.message}`);
     }
 
-    // Check if face recognition is enabled
-    const faceRecognitionEnabled =
-      await this.systemConfigService.isFaceRecognitionEnabled();
-    this.logger.log(`Face recognition enabled: ${faceRecognitionEnabled}`);
-
     // Send session info and face verification config to client
     const sessionData = {
       sessionId: chatSession.id,
       createdAt: chatSession.createdAt,
       faceVerification: {
-        enabled: faceRecognitionEnabled,
+        enabled: true,
         checkIntervalMs: this.faceService.checkIntervalMs,
         confidenceThreshold: this.faceService.confidenceThreshold,
       },
@@ -219,21 +212,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceReferencePayload
   ): Promise<void> {
-    // Check if face recognition is enabled
-    const faceRecognitionEnabled =
-      await this.systemConfigService.isFaceRecognitionEnabled();
-    if (!faceRecognitionEnabled) {
-      this.logger.log(
-        `Face recognition disabled, skipping reference storage for ${client.id}`
-      );
-      client.emit('face:reference:stored', {
-        success: true,
-        message: 'Face recognition is disabled',
-        skipped: true,
-      });
-      return;
-    }
-
     this.logger.log(`=== Face reference received from ${client.id} ===`);
     this.logger.log(`Payload length: ${payload?.imageBase64?.length || 0}`);
 
@@ -288,22 +266,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceVerifyPayload
   ): Promise<void> {
-    // Check if face recognition is enabled
-    const faceRecognitionEnabled =
-      await this.systemConfigService.isFaceRecognitionEnabled();
-    if (!faceRecognitionEnabled) {
-      this.logger.log(
-        `Face recognition disabled, skipping verification for ${client.id}`
-      );
-      client.emit('face:result', {
-        success: true,
-        confidence: 100,
-        message: 'Face recognition is disabled',
-        skipped: true,
-      });
-      return;
-    }
-
     this.logger.log(`Face verification request from ${client.id}`);
 
     try {
@@ -376,13 +338,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: FaceTrackingEventPayload
   ): Promise<void> {
-    // Check if face recognition is enabled
-    const faceRecognitionEnabled =
-      await this.systemConfigService.isFaceRecognitionEnabled();
-    if (!faceRecognitionEnabled) {
-      return; // Silently skip tracking when face recognition is disabled
-    }
-
     const timestamp = new Date(payload.timestamp).toISOString();
     const isWarning = WARNING_EVENT_TYPES.includes(payload.type);
 
