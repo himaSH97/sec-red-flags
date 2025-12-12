@@ -107,6 +107,7 @@ export default function ChatPage() {
   const hasInitializedRef = useRef(false); // Track if we've already initialized
   const isCleaningUpRef = useRef(false); // Track if cleanup is intentional
   const hasCheckedEntryRef = useRef(false); // Track if we've checked entry conditions
+  const videoInitializedRef = useRef(false); // Track if video recording has been initialized
 
   // Refs for tracking significant state changes
   const prevTrackingDataRef = useRef<FaceTrackingData | null>(null);
@@ -216,12 +217,41 @@ export default function ChatPage() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+
+        // Wait for video to be fully ready before marking camera as ready
+        // This ensures the MediaRecorder will have a valid stream
+        await new Promise<void>((resolve, reject) => {
+          const video = videoRef.current!;
+
+          // If video is already ready, resolve immediately
+          if (video.readyState >= 3) {
+            // HAVE_FUTURE_DATA or higher
+            resolve();
+            return;
+          }
+
+          const onCanPlay = () => {
+            video.removeEventListener('canplay', onCanPlay);
+            video.removeEventListener('error', onError);
+            resolve();
+          };
+          const onError = (e: Event) => {
+            video.removeEventListener('canplay', onCanPlay);
+            video.removeEventListener('error', onError);
+            reject(new Error('Video failed to load'));
+          };
+
+          video.addEventListener('canplay', onCanPlay);
+          video.addEventListener('error', onError);
+
+          // Start playing the video
+          video.play().catch(reject);
+        });
       }
 
       // Mark camera as ready for video recording
       setIsCameraReady(true);
-      console.log('[ChatPage] Camera started and ready');
+      console.log('[ChatPage] Camera started and stream is ready');
     } catch (error) {
       console.error('Failed to start camera for verification:', error);
       setIsCameraReady(false);
@@ -248,7 +278,7 @@ export default function ChatPage() {
       console.log('[ChatPage] Stopping video recording...');
       videoRecorderService.stop();
       socketService.sendVideoStop();
-      
+
       // Wait for pending uploads (including the final partial chunk) with a 10 second timeout
       console.log('[ChatPage] Waiting for pending video uploads...');
       await videoRecorderService.waitForPendingUploads(10000);
@@ -898,10 +928,10 @@ export default function ChatPage() {
     // Only check entry conditions once (Strict Mode protection)
     if (!hasCheckedEntryRef.current) {
       hasCheckedEntryRef.current = true;
-      
+
       // Check if we have a reference face (required from pre-chat checklist)
       const referenceFace = sessionStorage.getItem('referenceFace');
-      
+
       if (!referenceFace) {
         console.log('No reference face found, redirecting to home');
         router.push('/');
@@ -947,8 +977,9 @@ export default function ChatPage() {
       setIsInitializing(false);
 
       // Check if face verification is enabled
-      const faceVerificationEnabled = session.faceVerification?.enabled !== false;
-      
+      const faceVerificationEnabled =
+        session.faceVerification?.enabled !== false;
+
       // Send reference face only if face verification is enabled
       const storedFace = sessionStorage.getItem('referenceFace');
       if (storedFace && faceVerificationEnabled) {
@@ -1180,13 +1211,13 @@ export default function ChatPage() {
     if (!isConnected) return;
 
     const faceConfig = socketService.getFaceConfig();
-    
+
     // Skip periodic verification if face recognition is disabled
     if (faceConfig?.enabled === false) {
       console.log('Face verification disabled, skipping periodic checks');
       return;
     }
-    
+
     const intervalMs = faceConfig?.checkIntervalMs || 60000;
 
     console.log(`Setting up periodic verification every ${intervalMs}ms`);
@@ -1311,22 +1342,38 @@ export default function ChatPage() {
   // Initialize video recording when session is established and camera is ready
   useEffect(() => {
     if (!sessionId || !isConnected || !isCameraReady || !streamRef.current) {
-      console.log('[ChatPage] Video recording not starting - sessionId:', sessionId, 'connected:', isConnected, 'cameraReady:', isCameraReady);
+      console.log(
+        '[ChatPage] Video recording not starting - sessionId:',
+        sessionId,
+        'connected:',
+        isConnected,
+        'cameraReady:',
+        isCameraReady
+      );
       return;
     }
+
+    // Prevent double initialization (especially with React Strict Mode)
+    if (videoInitializedRef.current) {
+      console.log('[ChatPage] Video recording already initialized, skipping');
+      return;
+    }
+    videoInitializedRef.current = true;
 
     console.log(
       '[ChatPage] Initializing video recording for session:',
       sessionId
     );
 
-    // Initialize video recorder with callbacks
+    // Initialize video recorder with callbacks (this also resets internal state)
     videoRecorderService.initialize({
       onRequestUrl: (chunkIndex: number) => {
         if (socketService.isConnected()) {
           socketService.sendVideoUrlRequest(chunkIndex);
         } else {
-          console.warn(`[ChatPage] Cannot request URL for chunk ${chunkIndex} - socket not connected`);
+          console.warn(
+            `[ChatPage] Cannot request URL for chunk ${chunkIndex} - socket not connected`
+          );
         }
       },
       onChunkUploaded: (chunkIndex: number, s3Key: string, size: number) => {
@@ -1334,7 +1381,9 @@ export default function ChatPage() {
           socketService.sendVideoChunkUploaded(chunkIndex, s3Key, size);
           setVideoChunkCount((prev) => prev + 1);
         } else {
-          console.warn(`[ChatPage] Cannot confirm chunk ${chunkIndex} - socket not connected`);
+          console.warn(
+            `[ChatPage] Cannot confirm chunk ${chunkIndex} - socket not connected`
+          );
         }
       },
       onError: (chunkIndex: number, error: string) => {
@@ -1349,7 +1398,7 @@ export default function ChatPage() {
       },
     });
 
-    // Set up socket event handlers for video
+    // Set up socket event handlers for video BEFORE sending any messages
     const handleVideoUrl = (event: VideoUrlEvent) => {
       videoRecorderService.handleUrlResponse(
         event.chunkIndex,
@@ -1363,24 +1412,78 @@ export default function ChatPage() {
       videoRecorderService.handleUrlError(event.chunkIndex, event.error);
     };
 
+    // Register handlers first to ensure we don't miss any responses
     socketService.onVideoUrl(handleVideoUrl);
     socketService.onVideoUrlError(handleVideoUrlError);
 
-    // Start video recording
-    socketService.sendVideoStart();
-    videoRecorderService.start(streamRef.current).then((started) => {
+    // Helper function to start video recording with retry logic
+    const startVideoRecordingWithRetry = async (
+      stream: MediaStream,
+      maxRetries = 3
+    ): Promise<boolean> => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        console.log(
+          `[ChatPage] Starting video recording (attempt ${attempt}/${maxRetries})`
+        );
+
+        const started = await videoRecorderService.start(stream);
+        if (started) {
+          return true;
+        }
+
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 100; // 200ms, 400ms, 800ms
+          console.log(
+            `[ChatPage] Video start failed, retrying in ${delay}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+
+          // Reset the service before retrying
+          videoRecorderService.reset();
+        }
+      }
+      return false;
+    };
+
+    // Start video recording asynchronously
+    const startRecording = async () => {
+      // Small delay to ensure socket handlers are fully registered
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Notify backend we're starting video recording
+      socketService.sendVideoStart();
+
+      // Start local recording with retry logic
+      const stream = streamRef.current;
+      if (!stream) {
+        console.error('[ChatPage] Stream no longer available');
+        setVideoRecordingStatus('error');
+        return;
+      }
+
+      const started = await startVideoRecordingWithRetry(stream);
       if (started) {
         console.log('[ChatPage] Video recording started successfully');
       } else {
-        console.error('[ChatPage] Failed to start video recording');
+        console.error(
+          '[ChatPage] Failed to start video recording after all retries'
+        );
+        setVideoRecordingStatus('error');
       }
-    });
+    };
+
+    startRecording();
 
     return () => {
       console.log('[ChatPage] Cleaning up video recorder...');
       socketService.offVideoUrl(handleVideoUrl);
       socketService.offVideoUrlError(handleVideoUrlError);
-      // Don't destroy here - endSession handles that
+
+      // Reset video recorder if not intentionally ending session
+      if (!isCleaningUpRef.current) {
+        videoRecorderService.reset();
+      }
+      videoInitializedRef.current = false;
     };
   }, [sessionId, isConnected, isCameraReady]);
 

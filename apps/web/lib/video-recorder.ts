@@ -76,12 +76,57 @@ class VideoRecorderService {
   private finalChunkResolver: (() => void) | null = null;
 
   /**
+   * Reset all internal state without destroying callbacks
+   * This should be called before starting a new recording session
+   */
+  reset(): void {
+    console.log('[VideoRecorder] Resetting internal state...');
+
+    // Stop any existing recording
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      try {
+        this.mediaRecorder.stop();
+      } catch (e) {
+        // Ignore errors when stopping
+      }
+    }
+
+    // Clear all timers
+    if (this.chunkTimer) {
+      clearTimeout(this.chunkTimer);
+      this.chunkTimer = null;
+    }
+
+    for (const timer of this.retryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.retryTimers.clear();
+
+    // Reset all state
+    this.mediaRecorder = null;
+    this.stream = null;
+    this.status = 'idle';
+    this.currentChunkIndex = 0;
+    this.chunks.clear();
+    this.pendingUploads.clear();
+    this.urlResponses.clear();
+    this.awaitingFinalChunk = false;
+    this.mediaRecorderStopped = false;
+    this.finalChunkResolver = null;
+
+    console.log('[VideoRecorder] Reset complete');
+  }
+
+  /**
    * Initialize the video recorder with configuration and callbacks
    */
   initialize(
     callbacks: VideoRecorderCallbacks,
     config: Partial<VideoRecorderConfig> = {}
   ): void {
+    // Reset all internal state before initializing
+    this.reset();
+
     this.callbacks = callbacks;
     this.config = { ...DEFAULT_CONFIG, ...config };
     console.log('[VideoRecorder] Initialized with config:', this.config);
@@ -95,6 +140,45 @@ class VideoRecorderService {
       console.warn('[VideoRecorder] Already recording');
       return false;
     }
+
+    // Validate stream before proceeding
+    if (!stream) {
+      console.error('[VideoRecorder] No stream provided');
+      this.setStatus('error');
+      return false;
+    }
+
+    if (!stream.active) {
+      console.error('[VideoRecorder] Stream is not active');
+      this.setStatus('error');
+      return false;
+    }
+
+    const videoTracks = stream.getVideoTracks();
+    if (videoTracks.length === 0) {
+      console.error('[VideoRecorder] Stream has no video tracks');
+      this.setStatus('error');
+      return false;
+    }
+
+    const track = videoTracks[0];
+    if (track.readyState !== 'live') {
+      console.error(
+        '[VideoRecorder] Video track is not live, state:',
+        track.readyState
+      );
+      this.setStatus('error');
+      return false;
+    }
+
+    console.log(
+      '[VideoRecorder] Stream validation passed - active:',
+      stream.active,
+      'tracks:',
+      videoTracks.length,
+      'track state:',
+      track.readyState
+    );
 
     this.stream = stream;
     this.setStatus('starting');
@@ -234,7 +318,9 @@ class VideoRecorderService {
     };
 
     console.log(
-      `[VideoRecorder] Chunk ${chunk.index} ready, size: ${blob.size} bytes${isFinalChunk ? ' (final chunk)' : ''}`
+      `[VideoRecorder] Chunk ${chunk.index} ready, size: ${blob.size} bytes${
+        isFinalChunk ? ' (final chunk)' : ''
+      }`
     );
 
     this.chunks.set(chunk.index, chunk);
@@ -248,15 +334,17 @@ class VideoRecorderService {
     if (isFinalChunk) {
       console.log('[VideoRecorder] Final chunk received and queued for upload');
       this.awaitingFinalChunk = false;
-      
+
       // Resolve the waiting promise so waitForPendingUploads can proceed
       if (this.finalChunkResolver) {
         this.finalChunkResolver();
         this.finalChunkResolver = null;
       }
-      
+
       if (this.mediaRecorderStopped) {
-        console.log('[VideoRecorder] Final chunk processed, transitioning to stopped');
+        console.log(
+          '[VideoRecorder] Final chunk processed, transitioning to stopped'
+        );
         this.setStatus('stopped');
       }
     }
@@ -268,7 +356,9 @@ class VideoRecorderService {
   private requestUploadUrl(chunkIndex: number): void {
     // Don't request if we're stopped or idle (but allow 'stopping' for final chunk)
     if (this.status === 'stopped' || this.status === 'idle') {
-      console.log(`[VideoRecorder] Skipping URL request for chunk ${chunkIndex} - status: ${this.status}`);
+      console.log(
+        `[VideoRecorder] Skipping URL request for chunk ${chunkIndex} - status: ${this.status}`
+      );
       return;
     }
     console.log(`[VideoRecorder] Requesting URL for chunk ${chunkIndex}`);
@@ -342,9 +432,7 @@ class VideoRecorderService {
       chunk.status = 'uploaded';
       this.pendingUploads.delete(chunk.index);
 
-      console.log(
-        `[VideoRecorder] Chunk ${chunk.index} uploaded successfully`
-      );
+      console.log(`[VideoRecorder] Chunk ${chunk.index} uploaded successfully`);
 
       // Notify server
       this.callbacks?.onChunkUploaded(
@@ -452,7 +540,7 @@ class VideoRecorderService {
       }
 
       console.log('[VideoRecorder] Waiting for final chunk to arrive...');
-      
+
       // Set up resolver to be called when final chunk is processed
       this.finalChunkResolver = resolve;
 
@@ -488,18 +576,20 @@ class VideoRecorderService {
           resolve();
           return;
         }
-        
+
         // Timeout reached
         if (Date.now() - startTime > timeoutMs) {
-          console.warn(`[VideoRecorder] Timeout waiting for ${this.pendingUploads.size} pending uploads`);
+          console.warn(
+            `[VideoRecorder] Timeout waiting for ${this.pendingUploads.size} pending uploads`
+          );
           resolve();
           return;
         }
-        
+
         // Check again in 100ms
         setTimeout(checkPending, 100);
       };
-      
+
       checkPending();
     });
   }
@@ -564,4 +654,3 @@ class VideoRecorderService {
 
 // Export singleton instance
 export const videoRecorderService = new VideoRecorderService();
-
